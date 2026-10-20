@@ -17,8 +17,11 @@ Rules encoded here (they are the point of this module):
   undefined for a task (reference recall without important citations) leaves it out entirely.
 - Costs come only from the gateway ledger: list and billed USD, by stage, LLM vs tools. A task
   re-run on resume counts its latest session only (it replays its cached calls at recorded cost).
-- Systems that differ only in their writer `sample` are one system's independent samples:
-  comparisons average them per task
+  A controlled run continued from another run's decision point adds the list cost spent before
+  that point (its report's `offset_usd`) to its own.
+- Where a benchmark scores every component of the registered utility U (rewards.py), each task
+  also gets U and the judge-free retrieval return (`outcomes`). Systems that differ only in their
+  writer `sample` are one system's independent samples: comparisons average them per task
   (`merge_samples`).
   List cost prices the provider's prompt-cache hits as they happened; `cold_usd` prices every
   input token as a miss, the sensitivity view of a comparison that cache order could sway.
@@ -36,13 +39,14 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from jevscholar import benchmarks, ledger
+from jevscholar import benchmarks, ledger, rewards
 from jevscholar.artifacts import run_tasks
 from jevscholar.config import Alias, Experiment, load_models
 from jevscholar.types import JUDGE_PREFIX, parse_tag
 from jevscholar.util import read_json
 
 COSTS = ("cost_usd", "cold_usd")  # per-task list cost, as recorded and cache-cold
+OUTCOMES = ("utility", "retrieval_return")
 UNJUDGED = ("not_requested", "error:")  # statuses of a metric its eval file did not settle
 NO_ZERO = {"blocked_rate"}  # lower is better: an unscored task is not imputed (0 = best)
 KEY = ["bench", "system", "task"]
@@ -243,6 +247,42 @@ def means(long: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def outcomes(long: pd.DataFrame, stages: pd.DataFrame) -> pd.DataFrame:
+    """Rows to add to the long table, per task of a benchmark that scores every component of U
+    (rewards.UTILITY) and has a cap B0: the utility U, from the components' primary scores (R_c
+    of a task without important citations counts 0; a component not judged leaves U unjudged),
+    the failed-report U for a task without a report (a failed or missing generation); and the
+    judge-free retrieval return, R_e the share of important citations among the writer's
+    documents (`funnel`'s writer stage; undefined without important citations or a recorded
+    writer input). C is the task's list cost."""
+    b0 = {
+        b: benchmarks.get(b).cap_usd
+        for b in long.bench.unique()
+        if set(rewards.UTILITY) <= {primary(b), *protocol_metrics(b)}
+    }
+    sub = long[long.bench.map(b0).notna()]
+    if sub.empty:
+        return sub
+    score = primary_score(sub).where(sub.defined, 0.0)
+    wide = sub.assign(score=score).set_index([*KEY, "metric"]).score.unstack()
+    wide = wide.reindex(columns=list(rewards.UTILITY))  # a component never scored: U unjudged
+    tasks = sub.drop_duplicates(KEY).set_index(KEY)
+    cap = tasks.index.get_level_values("bench").map(b0)
+    u = rewards.utility(wide, tasks.cost_usd, cap).where(
+        tasks.has_report, rewards.failed_utility(tasks.cost_usd, cap)
+    )
+    r = pd.Series(math.nan, index=tasks.index)
+    if not stages.empty:
+        writer = stages.assign(bench="deepscholar").set_index(KEY)
+        share = (writer.writer / writer.n_gold).where(writer.n_gold > 0)
+        r = rewards.retrieval_return(share.reindex(tasks.index), tasks.cost_usd, cap)
+    rows = [
+        tasks.assign(metric="utility", value=u, judged=u.notna(), defined=True),
+        tasks.assign(metric="retrieval_return", value=r, judged=True, defined=r.notna()),
+    ]
+    return pd.concat(rows).assign(valid=lambda d: d.value.notna()).reset_index()[long.columns]
+
+
 def sample_groups(manifest: dict[str, Any]) -> dict[str, str]:
     """Each system's name -> the name its scores are merged under: systems whose definitions
     differ only in their writer `sample` are samples of the one with the lowest sample."""
@@ -329,7 +369,7 @@ def paired(long: pd.DataFrame, baseline: str) -> pd.DataFrame:
     costs = pd.concat([tasks.assign(metric=c, score=tasks[c]) for c in COSTS])
     rows = []
     for bench in long.bench.unique():
-        for metric in (primary(bench), *protocol_metrics(bench), *COSTS):
+        for metric in (primary(bench), *protocol_metrics(bench), *OUTCOMES, *COSTS):
             src = costs if metric in COSTS else scores
             sub = src[(src.bench == bench) & (src.metric == metric)]
             if baseline not in set(sub.system):

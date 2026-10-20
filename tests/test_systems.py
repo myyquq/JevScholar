@@ -177,6 +177,7 @@ async def test_closed_book_has_no_sources(gateway, tmp_path: Path) -> None:
         ("simple_rag:SimpleRAG", {"k": 20}),
         ("closed_book:ClosedBook", {}),
         ("deepscholar_base:DeepScholarBase", {"repair_citations": True}),
+        ("controlled:Controlled", {"budget_usd": 0.27, "policy": {"kind": "fixed"}}),
         ("fixed_evidence:FixedEvidence", {"evidence": ["gold"]}),
     ],
 )

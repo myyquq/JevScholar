@@ -17,6 +17,7 @@ from jevscholar.analysis import (
     long_table,
     means,
     merge_samples,
+    outcomes,
     paired,
     primary,
     sample_groups,
@@ -40,6 +41,7 @@ def write_report(
     ledger = ledger_frame(run_dir)
     stages = funnel(run_dir, manifest)
     long = long_table(run_dir, judgeset, ledger)
+    long = pd.concat([long, outcomes(long, stages)], ignore_index=True)
     (run_dir / "analysis").mkdir(exist_ok=True)
     long.to_csv(run_dir / "analysis" / "long.csv", index=False)
     stages.to_csv(run_dir / "analysis" / "funnel.csv", index=False)

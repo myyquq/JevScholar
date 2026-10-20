@@ -285,6 +285,7 @@ SYSTEMS = {
     "simple_rag": "jevscholar.systems.simple_rag:SimpleRAG",
     "closed_book": "jevscholar.systems.closed_book:ClosedBook",
     "deepscholar_base": "jevscholar.systems.deepscholar_base:DeepScholarBase",
+    "controlled": "jevscholar.systems.controlled:Controlled",
     "fixed_evidence": "jevscholar.systems.fixed_evidence:FixedEvidence",
 }
 BENCHMARKS = {

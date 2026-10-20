@@ -407,6 +407,16 @@ def test_a_system_cap_must_be_a_positive_number(tmp_path, cap):
         load_experiment(path, catalog=catalog)
 
 
+def test_a_controlled_cell_is_identified_by_its_resolved_policy():
+    """A change of d1's default prompt settings changes the cell, though the parameters do not."""
+    from jevscholar.controller import prompt
+    from jevscholar.systems.controlled import Controlled
+
+    identity = Controlled({"policy": {"kind": "d1"}}).identity()
+    assert identity["policy"]["profile"] == dataclasses.asdict(prompt.Profile())
+    assert "url" not in identity["policy"] and identity["version"] == Controlled.version
+
+
 def test_reused_verdicts_carry_the_judge_decisions(tmp_path):
     """DRB2 keeps its rubric decisions in a raw log next to the eval file: a reused verdict
     carries them, so review packs and agreement checks still see them."""

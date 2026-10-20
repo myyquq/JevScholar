@@ -1,6 +1,6 @@
 # The system catalog: one definition per kept system version. Experiments name systems; a name
 # they do not define comes from here. A definition may `extends` another (deep-merged). Bare class
-# names (simple_rag, closed_book, deepscholar_base, fixed_evidence) run with default
+# names (simple_rag, closed_book, deepscholar_base, controlled, fixed_evidence) run with default
 # parameters. Every system validates its parameters: an unknown knob is an error.
 
 # Simple RAG: one query, the top k sources per corpus (default: the experiment's search.k), one
@@ -24,3 +24,15 @@ deepscholar_ref:  # the paper's protocol (A.2.4): recursive search, 2 rounds of 
   task_usd: 2.0
   config: {search_mode: recursive, num_search_steps: 2, num_search_queries_per_step_per_corpus: 2}
 deepscholar_ref_citefix: {extends: deepscholar_ref, repair_citations: true}
+
+# The controlled loop (docs/05) at its benchmark's per-task cap: abstract, keyword and deepen
+# searches up to 6 batches of 10 papers, then finish and write; one policy each.
+ctl_fixed:  # abstract and keyword batches in turn, 3 batches (selected on val over 6)
+  use: controlled
+  policy: {kind: fixed, retrieval: [abstract, explore], batches: 3}
+ctl_d1:  # d1-3B on its prompt (controller/prompt.py), no weight update
+  use: controlled
+  policy: {kind: d1}
+ctl_prompted:  # the executor answering d1's prompt, with rules of thumb
+  use: controlled
+  policy: {kind: prompted}

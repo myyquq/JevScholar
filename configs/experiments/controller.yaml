@@ -1,0 +1,30 @@
+# The controlled loop on the June train and validation tasks (docs/05): a smoke check of every
+# policy, behaviour-policy rollouts (the trajectories `jev controller trajectories` labels for
+# SFT and RL), and selection on val. Serve d1 first: `scripts/train_env.sh jev controller serve`.
+budget: {run_usd: 1.0, judge_run_usd: 0.4}
+
+systems:
+  ctl_fixed_3: {extends: ctl_fixed, policy: {batches: 3}}  # the fixed rule's two batch counts
+  ctl_fixed_6: {extends: ctl_fixed, policy: {batches: 6}}
+  ctl_keyword:  # keyword searches and their next pages in turn
+    extends: ctl_fixed
+    actions: [explore, deepen]
+    policy: {retrieval: [explore, deepen]}
+
+variants:
+  smoke:  # two train tasks through every policy
+    workers: 2
+    budget: {run_usd: 0.3, judge_run_usd: 0.1}
+    benchmarks:
+      deepscholar:
+        split: train
+        limit: 2
+        systems: [ctl_fixed_3, ctl_keyword, ctl_d1, ctl_prompted]
+  rollouts:  # the behaviour policy on all 34 train tasks
+    benchmarks:
+      deepscholar: {split: train, systems: [ctl_fixed]}
+  val:  # selection on the 9 validation tasks: the fixed rule's batch count; d1 and the prompted
+    benchmarks:  # executor measured alongside
+      deepscholar:
+        split: val
+        systems: [ctl_fixed_3, ctl_fixed_6, ctl_d1, ctl_prompted]

@@ -1,4 +1,5 @@
-"""`jev` command line: data preparation, runs, export, evaluation, reports and judge checks.
+"""`jev` command line: data preparation, runs, export, evaluation, reports, judge checks and the
+d1 decision model.
 
 Thin wrappers only; every command maps to one library function. Heavy modules (data, search,
 runner, analysis) are imported inside the commands so `jev --help` stays instant.
@@ -6,6 +7,7 @@ runner, analysis) are imported inside the commands so `jev --help` stays instant
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,13 +15,15 @@ from typing import Annotated
 
 import typer
 
-from jevscholar.paths import RUNS
+from jevscholar.paths import CONFIGS, DATA_DERIVED, RUNS
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
 data_app = typer.Typer(no_args_is_help=True, help="Fetch pinned sources and build splits.")
 check_app = typer.Typer(no_args_is_help=True, help="Check the automated judges.")
+controller_app = typer.Typer(no_args_is_help=True, help="The d1-3B decision model (.venv-train).")
 app.add_typer(data_app, name="data")
 app.add_typer(check_app, name="check")
+app.add_typer(controller_app, name="controller")
 
 Run = Annotated[str, typer.Argument(metavar="RUN", help="A run id under runs/, or a path.")]
 Only = Annotated[list[str] | None, typer.Option("--only", help="Restrict to these benchmarks.")]
@@ -274,3 +278,68 @@ def check_review_score(
     from jevscholar.report import md_table
 
     typer.echo(md_table(score_pack(pack)))
+
+
+# --------------------------------------------------------------------------- d1
+@controller_app.command("serve")
+def controller_serve(
+    adapter: Annotated[Path | None, typer.Option(help="A trained adapter (default: none).")] = None,
+    port: Annotated[int, typer.Option(help="Local port (the d1 policy's `url`).")] = 9940,
+) -> None:
+    """Serve d1-3B's option probabilities to the controlled loop's d1 policy."""
+    from jevscholar.controller.serve import serve
+
+    serve(adapter, port)
+
+
+@controller_app.command("trajectories")
+def controller_trajectories(
+    runs: Annotated[list[str], typer.Argument(metavar="RUN...", help="DeepScholar train runs.")],
+    out: Annotated[Path, typer.Option(help="JSONL output.")] = DATA_DERIVED / "trajectories.jsonl",
+) -> None:
+    """The retrieval trajectories of controlled train runs, each decision with its return."""
+    from jevscholar.controller.data import trajectories
+    from jevscholar.util import write_jsonl
+
+    found = trajectories(_run_dir(r) for r in runs)
+    write_jsonl(out, found)
+    points = sum(len(t["points"]) for t in found)
+    typer.echo(f"{out}: {len(found)} trajectories, {points} retrieval decisions")
+
+
+@controller_app.command("sanity-data")
+def controller_sanity_data(
+    out: Annotated[Path, typer.Argument(help="Directory for train.jsonl and dev.jsonl.")],
+    train: int = 2000,
+    dev: int = 400,
+    seed: int = 0,
+) -> None:
+    """The training-loop check: a paper's primary arXiv category among four."""
+    from jevscholar.controller.d1 import write_examples
+    from jevscholar.controller.data import arxiv_categories
+
+    examples = arxiv_categories(train + dev, seed=seed)
+    write_examples(out / "train.jsonl", examples[:train])
+    write_examples(out / "dev.jsonl", examples[train:])
+    typer.echo(f"{out}: {train} train, {dev} dev")
+
+
+@controller_app.command("train")
+def controller_train(
+    recipe: Annotated[str, typer.Argument(help="A recipe of configs/training.yaml.")],
+) -> None:
+    """LoRA-train d1-3B; writes the best adapter, config.json and metrics.json under `out`."""
+    from jevscholar.controller.d1 import load_recipe, train
+
+    train(load_recipe(CONFIGS / "training.yaml", recipe), log=typer.echo)
+
+
+@controller_app.command("eval")
+def controller_eval(
+    data: Annotated[Path, typer.Argument(help="Example JSONL.")],
+    adapter: Annotated[Path | None, typer.Option(help="A trained adapter (default: none).")] = None,
+) -> None:
+    """Accuracy, NLL, Brier and ECE of d1-3B (optionally with an adapter) on `data`."""
+    from jevscholar.controller.d1 import D1, read_examples
+
+    typer.echo(json.dumps(D1.load(adapter=adapter).evaluate(read_examples(data)), indent=2))

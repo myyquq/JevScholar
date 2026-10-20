@@ -45,7 +45,8 @@ tools:  # USD per call at list price; free APIs carry a nominal price so retriev
   tavily_search: 0.008
   tavily_extract: 0.008
   openalex_search: 0.001
-free_tools: [arxiv_search, arxiv_lookup, openalex_search]  # nominal list, $0 billed
+  d1_choice: 0.00002  # per 1k prompt tokens: d1-3B served locally, a 3B model's market price
+free_tools: [arxiv_search, arxiv_lookup, openalex_search, d1_choice]  # nominal list, $0 billed
 
 judgesets:
   deepseek:

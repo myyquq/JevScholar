@@ -1,0 +1,30 @@
+# The main comparison on DeepScholar-Bench: the same executor, search and output limits for every
+# system, the controllers capped at B0 = $0.27 per task and DS-base at its natural cost, two
+# independent writer samples per task (docs/04, docs/06). Serve d1 first:
+# `scripts/train_env.sh jev controller serve`.
+budget: {run_usd: 4.0, judge_run_usd: 2.0}
+benchmarks:
+  deepscholar:
+    samples: 2
+    systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_d1, ctl_prompted]
+
+variants:
+  dev: {benchmarks: {deepscholar: {split: dev, limit: 20}}}     # June dev
+  dev2: {benchmarks: {deepscholar: {split: dev2, limit: 20}}}   # Nov dev2
+  test:  # the held-out tasks; the trained controllers join once frozen
+    budget: {run_usd: 15.0, judge_run_usd: 5.0}
+    benchmarks:
+      deepscholar:
+        split: test
+        limit: 90
+        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_d1,
+                  deepscholar_base_intro_nobg]
+  replay:  # $0 check: the baselines regenerate from the replay cache, byte-identical
+    replay_only: true
+    offpeak_only: false
+    benchmarks:
+      deepscholar:
+        split: dev
+        limit: 20
+        samples: 1
+        systems: [deepscholar_base_intro, simple_rag_k20]

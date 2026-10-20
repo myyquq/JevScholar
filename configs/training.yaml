@@ -1,0 +1,11 @@
+# d1-3B training recipes (`jev controller train NAME`, in .venv-train). Paths are relative to the
+# repository; unset fields take controller/d1.py's TrainConfig defaults (LoRA r 16, alpha 32,
+# dropout 0.05; warmup 5%; prompts over 7,552 tokens dropped).
+sanity:  # the training-loop check: a paper's primary arXiv category among four
+  train: data/derived/controller/sanity/train.jsonl  # `jev controller sanity-data`
+  dev: data/derived/controller/sanity/dev.jsonl
+  out: runs/controller/sanity
+  epochs: 2
+  lr: 2.0e-4
+  batch_tokens: 8192
+  accum: 4

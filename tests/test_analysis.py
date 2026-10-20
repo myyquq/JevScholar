@@ -310,6 +310,58 @@ def test_funnel_counts_important_citations_per_stage(tmp_path, monkeypatch):
     assert summary.loc["ctl", "screened"] == summary.loc["ctl", "screened_micro"] == 0.75
 
 
+def test_utility_retrieval_return_and_writer_samples():
+    """U and the retrieval return per task (rewards.py), and a system's writer samples merged."""
+
+    def rows(system: str, scores: dict | None, cost: float = 0.027) -> list[dict]:
+        base = {"bench": "deepscholar", "system": system, "task": "t1", "eval_error": False}
+        base |= {"cost_usd": cost, "billed_usd": cost / 2, "cold_usd": cost, "words": 100.0}
+        metrics = ("nugget_coverage", "reference_recall", "cite_p", "claim_support")
+        return [
+            base
+            | {
+                "status": "ok" if scores else "failed",
+                "has_report": bool(scores),
+                "metric": m,
+                "value": scores[m] if scores else math.nan,
+                "judged": bool(scores),
+                "defined": True,
+                "valid": bool(scores),
+            }
+            for m in metrics
+        ]
+
+    scores = {"nugget_coverage": 0.3, "reference_recall": 0.4, "cite_p": 0.5, "claim_support": 0.6}
+    long = pd.DataFrame(rows("a", scores) + rows("a_s1", None))  # the second sample failed
+    stages = pd.DataFrame([{"system": "a", "task": "t1", "n_gold": 10, "writer": 4}])
+    out = analysis.outcomes(long, stages).set_index(["system", "metric"]).value
+    assert out["a", "utility"] == pytest.approx(0.3 + 0.06 + 0.05 + 0.06 - 0.01)
+    assert out["a", "retrieval_return"] == pytest.approx(0.15 * 0.4 - 0.01)
+    assert out["a_s1", "utility"] == pytest.approx(-1.01)  # a failure: −1 and its cost
+    assert math.isnan(out["a_s1", "retrieval_return"])  # no writer input recorded
+
+    manifest = {
+        "experiment": {
+            "systems": {
+                "a": {"use": "controlled", "budget_usd": 0.27},
+                "a_s1": {"use": "controlled", "budget_usd": 0.27, "sample": 1},
+                "b": {"use": "controlled", "budget_usd": 0.1},
+            },
+            "benchmarks": {"deepscholar": {"systems": ["a", "a_s1", "b"]}},
+        }
+    }
+    groups = analysis.sample_groups(manifest)
+    assert groups == {"a": "a", "a_s1": "a", "b": "b"}
+    lone = pd.DataFrame(rows("b", None))  # a system without samples keeps its validity
+    assert not analysis.merge_samples(lone, groups).valid.any()
+    full = pd.concat([long, analysis.outcomes(long, stages)], ignore_index=True)
+    merged = analysis.merge_samples(full, groups).set_index("metric")
+    assert set(merged.system) == {"a"} and len(merged) == 6
+    assert merged.value["nugget_coverage"] == pytest.approx(0.15)  # (0.3 + a failure's 0) / 2
+    assert merged.value["utility"] == pytest.approx((0.46 - 1.01) / 2)
+    assert math.isnan(merged.value["retrieval_return"])  # one sample has none: not averaged
+
+
 def test_a_failed_continuation_keeps_its_inherited_cost(tmp_path):
     """The list cost before a continued run's decision point comes from its report, or, when it
     failed before reporting, from its first decision point."""
