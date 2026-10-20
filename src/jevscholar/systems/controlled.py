@@ -22,8 +22,10 @@ executed candidate, the policy's probabilities and input, and the spend around i
 rows and fetched pages the snapshots refer to are in rows.jsonl and pages.jsonl, the final state
 in state.json. A run can continue from a decision point (`start`) of an earlier run's task: it
 does not prepare that step again and re-reads the pages fetched before for free, and the spend up
-to that point is reported as `offset_usd`. `sample` > 0 gives the writer its own replay
-namespace: an independent sample from the same evidence.
+to that point is reported as `offset_usd`. With `take` it executes that candidate there instead
+of asking the policy (a counterfactual branch, controller/branches.py), logged as `taken`.
+`sample` > 0 gives the writer its own replay namespace: an independent sample from the same
+evidence.
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
-from pydantic import Field
+from pydantic import Field, SerializerFunctionWrapHandler, model_serializer
 
 from jevscholar import paths
 from jevscholar.artifacts import task_dir
@@ -54,6 +56,7 @@ from jevscholar.controller.state import (
     WRITE_DOCS,
     Candidate,
     Costs,
+    Kind,
     Pages,
     Paper,
     Point,
@@ -91,11 +94,23 @@ LIST_ITEM = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 
 class Start(Strict):
     """A decision point of an earlier run to continue from: the first of the task's decision
-    points in runs/<run>/<bench>/<system> after this many retrieval batches."""
+    points in runs/<run>/<bench>/<system> after this many retrieval batches; with `take`, the
+    candidate of that kind is executed there instead of asking the policy (an error where the
+    rules do not offer it)."""
 
     run: str
     system: str
     batches: int = 0
+    take: Kind | None = None
+
+    @model_serializer(mode="wrap")
+    def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Without `take`, the fields a start had before `take` existed: its cell identity (and
+        so the runs made with it) stays the same."""
+        out = handler(self)
+        if self.take is None:
+            out.pop("take", None)
+        return out
 
 
 class Controlled(System):
@@ -126,6 +141,7 @@ class Controlled(System):
         point carries becomes the state's offset, and this cell's cap and batch limit apply."""
         top, task, p = dsb.install(), ctx.task, self.p
         budget = ctx.cap_usd if p.budget_usd is None else p.budget_usd
+        take = None if p.start is None else p.start.take
         if p.start is None:
             state = State(task.prompt, budget, task.meta.get("abstract", ""), p.max_batches)
             first, pages = None, {}
@@ -140,7 +156,7 @@ class Controlled(System):
             (ctx.out_dir / "start.json").write_text(json.dumps(record))  # kept if the run fails
         with dsb.task_scope(ctx.search, task.seed, repair_citations=True):
             loop = Loop(ctx, top, self.costs, p.actions, pages, p.sample)
-            docs = await loop.run(state, make_policy(p.policy), first)
+            docs = await loop.run(state, make_policy(p.policy), first, take)
         (ctx.out_dir / "state.json").write_text(state.to_json())
         report = dsb.to_report(state.draft or "", docs)
         return finalize(
@@ -156,6 +172,14 @@ class Controlled(System):
             spent_usd=state.spent_usd,
             offset_usd=state.offset_usd,
         )
+
+
+def taken_index(offered: list[Candidate], kind: str) -> int:
+    """The position of the candidate of `kind` a branch executes among the legal ones."""
+    kinds = [c.kind for c in offered]
+    if kind not in kinds:
+        raise ValueError(f"{kind!r} is not offered at the decision point (offered: {kinds})")
+    return kinds.index(kind)
 
 
 def locate(task: Task, start: Start) -> Point:
@@ -199,11 +223,16 @@ class Loop:
             self.remember(query, k, rows)
 
     async def run(
-        self, state: State, policy: Policy, first: list[Candidate] | None = None
+        self,
+        state: State,
+        policy: Policy,
+        first: list[Candidate] | None = None,
+        take: str | None = None,
     ) -> pd.DataFrame:
         """Decide and search until `finish`, then write; returns the writer's documents. `first`:
         the opening decision's candidates, as a snapshot saved them, so that step is not
-        prepared (nor paid for) again."""
+        prepared (nor paid for) again. `take`: the kind of candidate the opening decision
+        executes, without asking the policy."""
         self.keep_rows([p.row for p in state.papers] + [r for c in first or () for r in c.rows])
         proposed = None if first is None else self.restored(state, first)
         while state.phase == "retrieval":
@@ -217,7 +246,13 @@ class Loop:
             point = snapshot(state, offered, len(self.hits))  # what the policy sees
             before = state.spent_usd
             forced = len(offered) == 1  # the rules leave no choice
-            decision = Decision(0) if forced else await policy.choose(self.ctx, state, offered)
+            taken = take is not None
+            if taken:
+                decision, take = Decision(taken_index(offered, take)), None
+            elif forced:
+                decision = Decision(0)
+            else:
+                decision = await policy.choose(self.ctx, state, offered)
             self.sync(state)  # the decision may have been charged
             control = state.spent_usd - before  # the policy's own calls
             choice = offered[decision.index]
@@ -231,7 +266,8 @@ class Loop:
             state.decisions += 1
             await self.act(state, choice)
             self.sync(state)
-            self.record(point, decision, offered.index(choice), forced, overridden, control, state)
+            executed = offered.index(choice)
+            self.record(point, decision, executed, forced, overridden, control, state, taken)
             proposed = None
         docs = self.documents(state)
         state.draft = await self.write(state.topic, docs)
@@ -382,9 +418,11 @@ class Loop:
         overridden: bool,
         control_usd: float,
         state: State,
+        taken: bool = False,
     ) -> None:
-        """A decision once executed: what the policy saw and asked for, what ran, and the list
-        spend before it (the snapshot's), of the policy's own calls and after the action."""
+        """A decision once executed: what the policy saw and asked for (`taken`: a branch's
+        executed candidate, not asked), what ran, and the list spend before it (the snapshot's),
+        of the policy's own calls and after the action."""
         append(
             self.decisions,
             point
@@ -395,6 +433,7 @@ class Loop:
                 "input": decision.input,
                 "forced": forced,
                 "overridden": overridden,
+                "taken": taken,
                 "control_usd": control_usd,
                 "spent_after_usd": state.spent_usd,
             },

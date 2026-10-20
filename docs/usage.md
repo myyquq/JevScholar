@@ -56,6 +56,9 @@ uv run jev check review-score PACK
 scripts/train_env.sh jev controller serve [--adapter DIR] [--port 9940]   # a d1 policy names
                                        # the served adapter by the sha256 of its safetensors file
 uv run jev controller trajectories RUN ... [--out FILE]   # labelled decisions of train runs
+uv run jev controller branches RUN [--system ctl_fixed] [--tasks N] [--per-task N] [--run-usd X] [--dry-run]
+                                       # branch every legal candidate of a train/val run's points
+uv run jev controller labels RUN ... --out FILE           # soft SFT targets from branch runs
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
@@ -200,3 +203,4 @@ older format that `jev controller trajectories` does not read.
 | `ctl-val` | the controllers on val; the fixed rule's batch count (docs/05) |
 | `eval-dev`, `eval-dev2` | the controller comparisons on June dev and Nov dev2 (docs/05) |
 | `controller/sanity`, `controller/sweep-1` | the LoRA training-loop check and the offline prompt search |
+| `branches-<RUN>-b<batches>-<kind>` | counterfactual branches of a train or val run's decision points (docs/06) |

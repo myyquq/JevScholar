@@ -9,3 +9,11 @@ sanity:  # the training-loop check: a paper's primary arXiv category among four
   lr: 2.0e-4
   batch_tokens: 8192
   accum: 4
+sft:  # the supervised warm start on counterfactual branch labels (docs/06)
+  train: data/derived/controller/sft/train.jsonl  # `jev controller labels` of train branch runs
+  dev: data/derived/controller/sft/dev.jsonl  # ... of val branch runs
+  out: runs/controller/sft
+  epochs: 2
+  lr: 2.0e-4
+  batch_tokens: 8192
+  accum: 4

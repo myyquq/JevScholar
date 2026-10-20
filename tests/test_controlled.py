@@ -494,6 +494,45 @@ def test_a_decision_point_continues_as_the_original_would(
         run_task(gateway, tmp_path / "w", fixed, 1.0, start={**start, "batches": 9})
 
 
+def test_a_branch_takes_its_candidate_then_continues(gateway, lotus_fakes, tmp_path, monkeypatch):
+    fixed = {"kind": "fixed", "batches": 3}
+    _, steps, _ = run_task(gateway, tmp_path / "o", fixed, 1.0)
+    assert executed(steps)[1] == "explore"  # the fixed rule's own choice after one batch
+    source = tmp_path / "runs" / "src" / "deepscholar" / "ctl" / "tasks"
+    for task in ("f", "x", "n"):
+        (source / task).mkdir(parents=True)
+        for name in ("decisions.jsonl", "rows.jsonl", "pages.jsonl"):
+            (source / task / name).write_text((tmp_path / "o" / name).read_text())
+    monkeypatch.setattr(paths, "RUNS", tmp_path / "runs")
+    start = {"run": "src", "system": "ctl", "batches": 1}
+
+    report, branch, _ = run_task(
+        gateway, tmp_path / "f", fixed, 1.0, start=start | {"take": "finish"}
+    )
+    assert executed(branch) == ["finish"] and branch[0]["taken"] and not branch[0]["forced"]
+    assert branch[0]["candidates"] == steps[1]["candidates"]  # what the source offered
+    assert report.meta["batches"] == 1
+
+    _, branch, _ = run_task(gateway, tmp_path / "x", fixed, 1.0, start=start | {"take": "abstract"})
+    assert executed(branch)[:2] == ["abstract", "explore"]  # then the fixed rule as before
+    assert [s["taken"] for s in branch] == [True] + [False] * (len(branch) - 1)
+    assert branch[-1]["state"]["batches"] == 3
+
+    with pytest.raises(ValueError, match="'deepen' is not offered"):
+        run_task(gateway, tmp_path / "n", fixed, 1.0, start=start | {"take": "deepen"})
+
+
+def test_a_start_without_take_keeps_its_identity():
+    """Runs continued from a decision point before `take` existed keep their cell identity."""
+    start = {"run": "src", "system": "ctl", "batches": 1}
+    plain = Controlled({"policy": {"kind": "fixed"}, "start": start}).identity()
+    assert plain["params"]["start"] == start
+    taken = Controlled({"policy": {"kind": "fixed"}, "start": start | {"take": "explore"}})
+    assert taken.identity()["params"]["start"] == start | {"take": "explore"}
+    with pytest.raises(ValidationError):
+        Controlled({"policy": {"kind": "fixed"}, "start": start | {"take": "write"}})
+
+
 def test_deepen_passes_over_a_query_with_nothing_new():
     """Regression: when the most productive query's next pages held only seen papers, no query
     was deepened at all."""
