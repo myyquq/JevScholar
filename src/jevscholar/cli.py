@@ -1,0 +1,276 @@
+"""`jev` command line: data preparation, runs, export, evaluation, reports and judge checks.
+
+Thin wrappers only; every command maps to one library function. Heavy modules (data, search,
+runner, analysis) are imported inside the commands so `jev --help` stays instant.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Annotated
+
+import typer
+
+from jevscholar.paths import RUNS
+
+app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
+data_app = typer.Typer(no_args_is_help=True, help="Fetch pinned sources and build splits.")
+check_app = typer.Typer(no_args_is_help=True, help="Check the automated judges.")
+app.add_typer(data_app, name="data")
+app.add_typer(check_app, name="check")
+
+Run = Annotated[str, typer.Argument(metavar="RUN", help="A run id under runs/, or a path.")]
+Only = Annotated[list[str] | None, typer.Option("--only", help="Restrict to these benchmarks.")]
+Workers = Annotated[int | None, typer.Option(help="Worker processes (0 = in-process).")]
+Judges = Annotated[str, typer.Option("--judges", help="Judgeset from models.yaml.")]
+
+
+@app.callback()
+def main(verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False) -> None:
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
+
+
+def _run_dir(run: str) -> Path:
+    from jevscholar.artifacts import run_dir
+
+    path = run_dir(run)
+    if not (path / "manifest.json").exists():
+        raise typer.BadParameter(f"no run at {path}")
+    return path
+
+
+# --------------------------------------------------------------------------- data
+@data_app.command("fetch")
+def data_fetch(
+    pin: Annotated[bool, typer.Option(help="Write computed sha256 for blank pins.")] = False,
+) -> None:
+    """Download every pinned source into data/raw/ and verify its sha256."""
+    from jevscholar import data
+
+    data.fetch(pin=pin)
+
+
+@data_app.command("prepare")
+def data_prepare() -> None:
+    """Build data/derived/ and the committed data/splits/."""
+    from jevscholar import data
+
+    data.prepare()
+
+
+@data_app.command("arxiv-index")
+def data_arxiv_index() -> None:
+    """Build the local BM25 index over the frozen arXiv metadata snapshot."""
+    from jevscholar.search import arxiv_local
+
+    typer.echo(arxiv_local.build_index())
+
+
+# --------------------------------------------------------------------------- runs
+@app.command()
+def run(
+    experiment: Annotated[str, typer.Argument(help="Experiment name or YAML path.")],
+    variant: Annotated[str | None, typer.Option(help="One of the file's variants.")] = None,
+    set_: Annotated[list[str] | None, typer.Option("--set", help="Override, a.b=value.")] = None,
+    only: Only = None,
+    run_id: Annotated[str | None, typer.Option(help="Resume or name a run.")] = None,
+    workers: Workers = None,
+    dry_run: Annotated[
+        bool, typer.Option(help="Print the resolved experiment and its cells only.")
+    ] = False,
+) -> None:
+    """Run (or resume) an experiment under runs/<run-id>/."""
+    import yaml
+
+    from jevscholar.config import experiment_path, load_experiment, load_models
+    from jevscholar.runner import plan, run_experiment
+
+    exp = load_experiment(experiment_path(experiment), variant, set_ or [])
+    run_id = run_id or f"{exp.name.replace('/', '-')}-{datetime.now(UTC):%Y%m%d-%H%M%S}"
+    if dry_run:
+        cells, tasks, batches = plan(exp, RUNS / run_id, load_models(), only)
+        typer.echo(yaml.safe_dump(exp.model_dump(mode="json"), sort_keys=False))
+        for bench, by_system in cells.items():
+            for system, cell in by_system.items():
+                typer.echo(f"{bench}/{system}: cell {cell['hash']}, {len(tasks[bench])} tasks")
+        typer.echo(f"{sum(map(len, batches))} tasks pending in runs/{run_id}")
+        return
+    stopped = run_experiment(exp, RUNS / run_id, only=only, workers=workers)
+    typer.echo(f"run {run_id}: " + (f"stopped early ({stopped})" if stopped else "complete"))
+    if stopped:
+        raise typer.Exit(1)
+
+
+@app.command()
+def export(run_: Run, only: Only = None) -> None:
+    """Write every task's official layout (failed or missing -> empty) and export/audit.json."""
+    from jevscholar.runner import export_run
+
+    export_run(_run_dir(run_), only=only)
+
+
+@app.command("eval")
+def eval_(
+    run_: Run,
+    judges: Judges = "deepseek",
+    only: Only = None,
+    workers: Workers = None,
+    redo: Annotated[
+        list[str] | None, typer.Option("--redo", help="Judge these metrics again.")
+    ] = None,
+    metrics: Annotated[
+        list[str] | None, typer.Option("--metrics", help="Judge only these metrics.")
+    ] = None,
+    reuse: Annotated[
+        list[str] | None,
+        typer.Option("--reuse", help="Copy verdicts on identical reports from these runs."),
+    ] = None,
+) -> None:
+    """Re-export, then judge every task not judged yet (errored evals are retried).
+
+    Tasks without a usable report are recorded as "no_report" without a judge call. `--redo M`
+    re-judges metric M everywhere; settled metrics are reused, not paid for again. `--metrics M`
+    judges only M (DeepScholar); a later run with more metrics judges only those not settled
+    yet, as it does a metric whose protocol version changed. `--reuse RUN` starts each task
+    from RUN's verdicts where RUN judged exactly the same exported report."""
+    from jevscholar.judging import eval_run
+    from jevscholar.runner import export_run
+
+    run_dir = _run_dir(run_)
+    if metrics and (extra := sorted(set(redo or ()) - set(metrics))):
+        raise typer.BadParameter(f"--redo {extra} must be among --metrics")
+    export_run(run_dir, only=only)
+    stopped = eval_run(
+        run_dir,
+        judges,
+        only=only,
+        workers=workers,
+        redo=tuple(redo or ()),
+        metrics=tuple(metrics or ()),
+        reuse=tuple(_run_dir(r) for r in reuse or ()),
+    )
+    if stopped:
+        typer.echo(f"eval stopped early ({stopped})")
+        raise typer.Exit(1)
+
+
+@app.command()
+def report(
+    run_: Run,
+    baseline: Annotated[
+        str, typer.Option(help="Paired-comparison baseline.")
+    ] = "deepscholar_base_intro",
+    judges: Judges = "deepseek",
+) -> None:
+    """Write report.md, analysis/long.csv and per-task trajectory.jsonl."""
+    from jevscholar.report import write_report
+
+    typer.echo(write_report(_run_dir(run_), baseline=baseline, judgeset=judges))
+
+
+# --------------------------------------------------------------------------- judge checks
+@check_app.command("calibrate")
+def check_calibrate(
+    bench: Annotated[
+        str,
+        typer.Argument(
+            help="drb2 or deepscholar (published reports), or deepscholar-controls (fixed "
+            "reports bounding each metric)."
+        ),
+    ],
+    run_id: Annotated[str | None, typer.Option(help="Run id (default: BENCH-calibration).")] = None,
+    source: Annotated[
+        str | None,
+        typer.Option(help="deepscholar-controls: RUN/SYSTEM whose dev reports they start from."),
+    ] = None,
+    judges: Judges = "deepseek",
+    workers: Workers = None,
+) -> None:
+    """Judge fixed reports: DRB2's commercial systems (ranked against the official boards), the
+    DeepScholar authors' own DeepScholar-base reports (next to the paper's row), or DeepScholar
+    evaluator controls (the reference section, the abstract, another task's report, ...)."""
+    from jevscholar.checks import calibration
+
+    run_dir = RUNS / (run_id or f"{bench}-calibration")
+    kw = {"judgeset": judges} | ({} if workers is None else {"workers": workers})
+    if bench == "drb2":
+        calibration.calibrate_drb2(run_dir, **kw)
+    elif bench == "deepscholar":
+        calibration.calibrate_deepscholar(run_dir, **kw)
+    elif bench == "deepscholar-controls":
+        if source is None or "/" not in source:
+            raise typer.BadParameter("deepscholar-controls needs --source RUN/SYSTEM")
+        run, system = source.rsplit("/", 1)
+        calibration.calibrate_deepscholar_controls(run_dir, _run_dir(run), system, **kw)
+    else:
+        raise typer.BadParameter("fixed reports exist for drb2, deepscholar, deepscholar-controls")
+    typer.echo((run_dir / "calibration.md").read_text())
+
+
+@check_app.command("agree")
+def check_agree(
+    run_: Annotated[str, typer.Argument(metavar="RUN", help="Run whose exports are re-judged.")],
+    run_id: Annotated[str, typer.Option(help="Run id under runs/.")] = "judge-agreement",
+    system: Annotated[
+        list[str] | None,
+        typer.Option(help="Systems to re-judge, the baseline first (default: all)."),
+    ] = None,
+    judges: Judges = "official",
+    tasks: Annotated[
+        list[str] | None,
+        typer.Option("--tasks", help="BENCH=N leading tasks (default: 6 / 40 / 6)."),
+    ] = None,
+    workers: Workers = None,
+) -> None:
+    """Re-judge a subset of RUN with another judgeset and measure agreement with its DeepSeek
+    verdicts (item kappa, paired-difference signs). Judged tasks are kept; re-run to extend."""
+    from jevscholar.checks.agreement import TASKS, judge_subset, summarize
+
+    source, run_dir = _run_dir(run_), RUNS / run_id
+    plan = dict(TASKS)
+    for spec in tasks or ():
+        bench, _, n = spec.partition("=")
+        if bench not in plan or not n.isdigit():
+            raise typer.BadParameter(f"--tasks {spec!r}: expected one of {sorted(plan)}=N")
+        plan[bench] = int(n)
+    stopped = judge_subset(
+        source, run_dir, systems=tuple(system or ()), judgeset=judges, tasks=plan, workers=workers
+    )
+    summarize(source, run_dir, judges, stopped=stopped)
+    typer.echo((run_dir / "agreement.md").read_text())
+    if stopped:
+        typer.echo(f"judging stopped early ({stopped})")
+        raise typer.Exit(1)
+
+
+@check_app.command("review-pack")
+def check_review_pack(
+    run_: Run,
+    out: Annotated[Path | None, typer.Option(help="Pack directory (new).")] = None,
+    judges: Judges = "deepseek",
+    system: Annotated[list[str] | None, typer.Option(help="Systems to sample.")] = None,
+    seed: int = 0,
+) -> None:
+    """Sample judge decisions into a blind pack (key.json stays with the organiser)."""
+    from jevscholar.checks.review import export_pack
+
+    run_dir = _run_dir(run_)
+    out = out or run_dir / f"review-{judges}"
+    typer.echo(export_pack(run_dir, out, judgeset=judges, systems=system, seed=seed))
+    typer.echo(f"give reviewers {out} without key.json")
+
+
+@check_app.command("review-score")
+def check_review_score(
+    pack: Annotated[Path, typer.Argument(help="Pack directory with labels.csv.")],
+) -> None:
+    """Agreement and kappa of the reviewer's labels with the judge."""
+    from jevscholar.checks.review import score_pack
+    from jevscholar.report import md_table
+
+    typer.echo(md_table(score_pack(pack)))

@@ -1,0 +1,59 @@
+# Model routing for the LLM gateway. Every client talks to the gateway with a model *alias*;
+# the gateway resolves it to an upstream, normalises the request and meters the call.
+# Prices are list prices in USD per 1M tokens (price book pb-2026-10, checked 2026-10-15).
+# Alias naming rules: the executor alias must contain "deepseek" (openai-agents reasoning replay);
+# judge aliases must avoid "o1", a "gpt-5" prefix and "oss" (upstream client heuristics).
+
+campaign_usd: 45.0  # hard stop on billed spend summed over all runs (cache/spend.sqlite)
+
+upstreams:
+  deepseek: {base_url: https://api.deepseek.com, key_env: DEEPSEEK_API_KEY, dialect: deepseek,
+             concurrency: 64, timeout_s: 1200, offpeak_discount: 0.5}
+  openai:   {base_url: https://api.openai.com/v1, key_env: OPENAI_API_KEY, dialect: openai,
+             concurrency: 16, timeout_s: 1200}
+  local:    {base_url: "http://127.0.0.1:9931/v1", dialect: llama, concurrency: 4, timeout_s: 1800,
+             billed: false}  # priced at a market proxy for budgets, $0 billed
+
+aliases:
+  # executors (replay cache on; default_max_tokens = the shared 10000 when a client sends none)
+  deepseek-flash:       {upstream: deepseek, model: deepseek-flash, thinking: false, cache: true,
+                         default_max_tokens: 10000, price: {miss: 0.30, hit: 0.006, out: 1.20}}
+  # the paper's DeepScholar-ref model, for the backbone comparison only (not a backbone of ours)
+  gpt-4.1-exec:         {upstream: openai, model: gpt-4.1-2025-04-14, passthrough: true, cache: true,
+                         price: {miss: 2.00, hit: 0.50, out: 8.00}}
+  qwen3.8-27b:          {upstream: local, model: qwen3.8-27b, thinking: false, cache: true,
+                         default_max_tokens: 10000,
+                         price: {miss: 0.24, hit: 0.05, out: 2.20}}  # local; OpenRouter price proxy
+  # DeepSeek judges, mirroring each official judge's reasoning mode (never cached)
+  ds-judge-chat:        {upstream: deepseek, model: deepseek-flash, thinking: false,
+                         default_max_tokens: 4096, price: {miss: 0.30, hit: 0.006, out: 1.20}}
+  ds-judge-think:       {upstream: deepseek, model: deepseek-flash, thinking: true, effort: high,
+                         force_json_object: true, price: {miss: 0.30, hit: 0.006, out: 1.20}}
+  # official judges (agreement check only)
+  gpt-4o-2024-08-06:       {upstream: openai, model: gpt-4o-2024-08-06, passthrough: true,
+                            price: {miss: 2.50, hit: 1.25, out: 10.00}}
+  gpt-4.1-2025-04-14:      {upstream: openai, model: gpt-4.1-2025-04-14, passthrough: true,
+                            price: {miss: 2.00, hit: 0.50, out: 8.00}}
+  gpt-4.1-mini-2025-04-14: {upstream: openai, model: gpt-4.1-mini-2025-04-14, passthrough: true,
+                            price: {miss: 0.40, hit: 0.10, out: 1.60}}
+  gpt-5.5:                 {upstream: openai, model: gpt-5.5, passthrough: true,
+                            price: {miss: 5.00, hit: 0.50, out: 30.00}}
+
+tools:  # USD per call at list price; free APIs carry a nominal price so retrieval is never free
+  arxiv_search: 0.001
+  arxiv_lookup: 0.001
+  tavily_search: 0.008
+  tavily_extract: 0.008
+  openalex_search: 0.001
+free_tools: [arxiv_search, arxiv_lookup, openalex_search]  # nominal list, $0 billed
+
+judgesets:
+  deepseek:
+    deepscholar: ds-judge-chat
+    researchqa: ds-judge-chat
+    drb2: ds-judge-think
+  official:
+    deepscholar: gpt-4o-2024-08-06
+    deepscholar.nugget_coverage: gpt-4.1-2025-04-14
+    researchqa: gpt-4.1-mini-2025-04-14
+    drb2: gpt-5.5

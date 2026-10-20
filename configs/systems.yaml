@@ -1,0 +1,26 @@
+# The system catalog: one definition per kept system version. Experiments name systems; a name
+# they do not define comes from here. A definition may `extends` another (deep-merged). Bare class
+# names (simple_rag, closed_book, deepscholar_base, fixed_evidence) run with default
+# parameters. Every system validates its parameters: an unknown knob is an error.
+
+# Simple RAG: one query, the top k sources per corpus (default: the experiment's search.k), one
+# writing pass.
+simple_rag_k20: {use: simple_rag, k: 20}       # the frozen retrieve-then-generate baseline
+simple_rag_raw: {use: simple_rag, query: raw}  # ResearchQA: the benchmark's own query string
+
+# DeepScholar-base (vendored upstream c95413b, agentic search by default; docs/03). Bare
+# `deepscholar_base` carries the merge repair P6 only. Every version runs at its natural cost: its
+# per-task cap ($2) is one it never reaches (its most expensive task so far cost $0.45, on DRB2).
+deepscholar_base_asis: {use: deepscholar_base, repair_merge: false, task_usd: 2.0}  # as released
+deepscholar_base_citefix: {use: deepscholar_base, repair_citations: true, task_usd: 2.0}  # P6 + P10
+deepscholar_base_intro:  # repaired, intro-only: the DeepScholar baseline of every comparison
+  extends: deepscholar_base_citefix
+  config: {categorize_references: false, generate_insights: false}
+deepscholar_base_intro_nobg:  # diagnostic: the intro writer without the search agent's draft
+  extends: deepscholar_base_intro
+  search_background: false
+deepscholar_ref:  # the paper's protocol (A.2.4): recursive search, 2 rounds of at most 2 queries
+  use: deepscholar_base
+  task_usd: 2.0
+  config: {search_mode: recursive, num_search_steps: 2, num_search_queries_per_step_per_corpus: 2}
+deepscholar_ref_citefix: {extends: deepscholar_ref, repair_citations: true}

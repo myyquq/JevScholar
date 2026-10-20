@@ -1,0 +1,138 @@
+# Every external file JevScholar reads, pinned by revision and sha256 (`jev data fetch`).
+# A blank sha256 is refused; `jev data fetch --pin` trusts it on first use: it computes the
+# digest and writes it back.
+# Archive entries: `extract` maps a path inside the archive (top-level folder stripped; a trailing
+# "/" selects a whole directory) to a destination under data/raw/. File entries: `files` maps a
+# path relative to `url` to its sha256, saved under data/raw/<dest>.
+# data/raw/ is never committed (licences: DeepScholar MIT, DRB2 data CC BY 4.0 / CC BY-NC 4.0 for
+# idx 26 and 110, ResearchQA data MIT, ResearchQA code unlicensed, DRB2 reports Apache-2.0).
+
+deepscholar-jun2025:
+  note: guestrin-lab/deepscholar main, June-2025 set (63 rows); nugget folders are misaligned (upstream
+    issue 16), prepare() remaps them by qid as PR 17 does
+  url: https://codeload.github.com/guestrin-lab/deepscholar/tar.gz/c95413b3b2f3255b461b90d0ce650f685ae2d1ff
+  sha256: c65f9d2463c6fbcec19ef89630aa1e829b3aea347f66bf64c5394f0944952589
+  extract:
+    dataset/: deepscholar/jun2025/
+deepscholar-nov2025:
+  note: branch new_dataset head (upstream PR 15, unmerged), Nov-2025 set (200 rows)
+  url: https://codeload.github.com/guestrin-lab/deepscholar/tar.gz/81bba2f5a8a97c15d7a88e130a53977c764e2c27
+  sha256: 6d1180926a408df51962fc76318b39eda6eedcf173b74ec7bffe903fa067d5da
+  extract:
+    new_dataset/: deepscholar/nov2025/
+drb2:
+  note: imlrz/DeepResearch-Bench-II main (same commit as third_party/drb2)
+  url: https://codeload.github.com/imlrz/DeepResearch-Bench-II/tar.gz/b38f360603db9531b102aef8c166cedb8509b6f6
+  sha256: 4b8dd1d7e8727a97079052b14edcb7ea2bee1843f96a8c57c26b527522c4f4e0
+  extract:
+    tasks_and_rubrics.jsonl: drb2/tasks_and_rubrics.jsonl
+researchqa-code:
+  note: official coverage scorer; the repo has no licence, so it is fetched, never committed
+  url: https://codeload.github.com/realliyifei/ResearchQA/tar.gz/747a9a1330f097a0e20672240cb47e3cf02500ae
+  sha256: 3d0435f0dafbf3b811485b540e81b9334b1a9dce660675ba6a53da3de9a5c1c7
+  extract:
+    compute_coverage.py: researchqa/code/compute_coverage.py
+    researchqa_loader.py: researchqa/code/researchqa_loader.py
+researchqa-data:
+  note: HF realliyifei/ResearchQA main (rubrics after the 2025-08-25 citation fix)
+  url: https://huggingface.co/datasets/realliyifei/ResearchQA/resolve/bf8a4cfef073ecfc0275c57acf8ca960e4dc79d6/
+  dest: researchqa/
+  files:
+    valid.json: 0fe9a9ac7a026b7a632a2b0d26b064e182acdc5a8d4bdb4e9b3f5e2a873462c1
+    test.json: e097d241376f4bbd3a785b8c050c561a73f733bdf7e2de5939c4e014d5725bc1
+researchqa-mini-ids:
+  note: the official 776-question test_mini subset, as used by DR Tulu
+  url: https://huggingface.co/datasets/rl-research/researchqa_official_subset_ids/resolve/d4e311c0f57fa7eb8da0b93bc9280680c73caa5c/
+  dest: researchqa/
+  files:
+    researchqa_official_subset_ids.json: 14b8a8fafb5d3a66087927e3ada15d1437281b42cc692fa372895ef420bd2f0c
+drb2-reports:
+  note: commercial reference reports for the 12 DRB2 dev ids (judge calibration); native formats as published
+    (md, docx, html, pdf)
+  url: https://huggingface.co/datasets/muset-ai/DeepResearch-Bench-II-Dataset/resolve/73c8b0010f6c63a13df52250561dd8c5a68d9612/
+  dest: drb2/reports/
+  files:
+    Doubao-DeepResearch/idx-19.md: b69d338ce17c2dc9d40e5b74b7eb48dbacfead4da7601dca637cfb088a708880
+    Doubao-DeepResearch/idx-47.md: 7068c5165fd520aa2eaa62d9b51a667d354013084d71e77ed3db2240416ceb72
+    Doubao-DeepResearch/idx-48.md: 9d5beaa8c014849d92bc421fc3855d45d810d59b44dac9bfb1b5bfd44377a650
+    Doubao-DeepResearch/idx-52.md: 6af13657118ca52180ae51018190e76c0b1ca9d4678ddee08de3107d75220db9
+    Doubao-DeepResearch/idx-60.md: a3e3ed1c7b67ad4ae7163eddc2e7e2a29157496d428a63e4eeeb662892788c33
+    Doubao-DeepResearch/idx-63.md: 655110b79ceb0b501cb2e927e93e1b81bc5cef4d0e529e57d73fa901302faef8
+    Doubao-DeepResearch/idx-83.md: 074108f437d8b32d0082db00534dc49c38e91f034dec94a43de79bfe9f85f940
+    Doubao-DeepResearch/idx-88.md: 69c2d51480b1edbe51324f7300ce6b4f2bfeb397539cc35fb9161b3b086a9488
+    Doubao-DeepResearch/idx-103.md: 0584c3d0f2878491b1f0812c2fbf2de4386fd2966beab74dedc2c61cccc9cc11
+    Doubao-DeepResearch/idx-114.md: c5dec07db37e9cd34b16c31d579bfe44027ca65e9cbd139c2b670bf79ba51bc1
+    Doubao-DeepResearch/idx-118.md: f13d49c422f0e03028226cc361234ed8cd05ec470396256f1580c3a34dd6d5b9
+    Doubao-DeepResearch/idx-121.md: 6d3e14cf8012d3f15ecc0a6fe5fe3fb47739fac51cda6312c37f758f9b32a319
+    GPT-o3-DeepResearch/idx-19.docx: 0bb2f821f9a7154ef98ea7f279ae8e41016704d63ade41e587d3814790ba383f
+    GPT-o3-DeepResearch/idx-47.docx: fc71f9996c3b839ef202230806255413f728f26c40666da93c6715a3f10441ec
+    GPT-o3-DeepResearch/idx-48.docx: 2e1dbaee2a3bfa71ee8c5f62ee3a78546b5219d88cdf41a612c38e1dd70e9482
+    GPT-o3-DeepResearch/idx-52.docx: 97d5dd6f063c08c6d129a81f51bf88fe701ffd48eebccc361db8fe7edacc3ab3
+    GPT-o3-DeepResearch/idx-60.docx: ef00472419da40e80b24b1e777273621e123738d100ec0ce8aa6d2610e2a0a7b
+    GPT-o3-DeepResearch/idx-63.docx: 60b62505187f55715fd7b37fd26c2878b8c59394405c2e59a718eeb0a6b3700a
+    GPT-o3-DeepResearch/idx-83.docx: 0d896cb6128983e65b6802e3aa104648a8ebbd07c4382aba239ae562608a8f0a
+    GPT-o3-DeepResearch/idx-88.docx: 254267fd3be7910e706e7fc9787f136ff37d20c84c3b8edbf03d53306f1be5b2
+    GPT-o3-DeepResearch/idx-103.docx: 6df5e3fab140fdddb8c76a5db8b8043a5aa3b0ed24c90aaaaf3a544aa6012139
+    GPT-o3-DeepResearch/idx-114.docx: dff05bd252f13c868d7f10f41eaccd35e078acc6145b11b4039c971cd0c07fd9
+    GPT-o3-DeepResearch/idx-118.docx: e17792b7c002789734fde1386e4abd21999b909205ba6a58ce6115a8300e4941
+    GPT-o3-DeepResearch/idx-121.docx: a0220805340f461727c0a6c1ca91398e37697c22ff027ae74fff73ef8cdf6851
+    Gemini2.5-Pro-DeepResearch/idx-19.docx: a2f6e65d7fedc6f79fb5e2e80933d2053f4eff8e7c57677c6d3a06a3f973fb80
+    Gemini2.5-Pro-DeepResearch/idx-47.docx: 722a0cdb2a9b2244502e597a606d80c596d49a40e34c4aaf899cfecbdbd14798
+    Gemini2.5-Pro-DeepResearch/idx-48.docx: 276e42bd9c12de47efe5f5506fa91a223021235567d03a37e974bd70477cd095
+    Gemini2.5-Pro-DeepResearch/idx-52.docx: 83fff607bd35bf5d5e98cd08eb1268d0f7030d8a2d3964bb5e3d03e12d080783
+    Gemini2.5-Pro-DeepResearch/idx-60.docx: 8c3074c04c0f07e127dd0e03ec14d00da94ce4c7dbf5ccf12e5899cbcd587533
+    Gemini2.5-Pro-DeepResearch/idx-63.docx: e871e9a899a5477f9344c2ac8d8a7422ab059eac5528a1f086889b3a4262d8ed
+    Gemini2.5-Pro-DeepResearch/idx-83.docx: 862af1be6ffcac5a58df0682312a1c1bafcc502f0388de8b3fc63138f17880f9
+    Gemini2.5-Pro-DeepResearch/idx-88.docx: 1365bedc0c6bd086ce3530975d4cb24414c9cf185bb1d15319cb555dc8247610
+    Gemini2.5-Pro-DeepResearch/idx-103.docx: 4b500ab1fcbd55c600948724ce2f18ac2473701e2d2f8eb77fc69b080bb02f2b
+    Gemini2.5-Pro-DeepResearch/idx-114.docx: 108ca8d7f9539f1c74a070ac96d4e66deba3be9235150753713cfc6ab6841b77
+    Gemini2.5-Pro-DeepResearch/idx-118.docx: df4f5ad3c613ebf28e8cfbdf3388ddbb49eab28a40f265a85f1dd69cb6d908a4
+    Gemini2.5-Pro-DeepResearch/idx-121.docx: 3148c6401a0e3952b9e5dc6fa0c352db03b248fd3106d038c22effc621bbc6b8
+    Gemini3-Pro-DeepResearch/idx-19.md: 6ec138094c4c3bfd0a0cea1a8df9f7b01191c53e2e679df04b0b294dc467ba4c
+    Gemini3-Pro-DeepResearch/idx-47.md: d0702e3ccadc2ec1aab9e9de171d8a64d99e76dc1637618c5aa76d46465cbafe
+    Gemini3-Pro-DeepResearch/idx-48.md: b33f4a61711811cd3d1615df53a8f4e9dc6a6d292624e3a8fa79975be34a5a1c
+    Gemini3-Pro-DeepResearch/idx-52.md: a1da8e7196339d0c8553ff5fb88581173abe767ec4f9bab06127dbeb4fccff63
+    Gemini3-Pro-DeepResearch/idx-60.md: 243585e925e43051a1bbc409ac29b63b028290339409b61c0d2601d14122d165
+    Gemini3-Pro-DeepResearch/idx-63.md: 8520d0a5c3c1e645b6ad8950c573a7329369e0482ad8124e15a3b4f34f64a299
+    Gemini3-Pro-DeepResearch/idx-83.md: 8d27ddc043271736f26deadc6d5d0994e0e68a29e5aa3fade8bbf06c4ba9b9f0
+    Gemini3-Pro-DeepResearch/idx-88.md: e0e6a8c4d134ad659b73b9e4c201d080f9b0890828bf89a3bbb781f08cfe9e85
+    Gemini3-Pro-DeepResearch/idx-103.md: 77f2edea6c0742ef5b2a52b0442264558b16f6bcde24d308ab0bd835feb7100a
+    Gemini3-Pro-DeepResearch/idx-114.md: f993055f8ba8210e2b417e5b00827c930961ec3f9e311d29ae5518b3f3ab920c
+    Gemini3-Pro-DeepResearch/idx-118.md: 750de9e51d4efe30cc897e4e2c25d48a699aea23a870a057cbc646c72fd3124f
+    Gemini3-Pro-DeepResearch/idx-121.md: f958c17f6dd678e465d3da43ce3da3f1e928827d56cb960ff61a169a9a0b7322
+    Grok-DeepSearch/idx-19.html: 9d8c2ba0863f0b4e607364b2ec07fa6ef2c1a435c1f1db3d107025936892a7cb
+    Grok-DeepSearch/idx-47.html: 1ccb52cf3014360e163b4c61b2d69e9b5b7a8320d375bd198a11325a8ab592b4
+    Grok-DeepSearch/idx-48.html: 122399c9fa388b6f38f807f0aaf8f8561a3dd547169e66f985a6c14963633acc
+    Grok-DeepSearch/idx-52.html: 05d4ff018fb82ff42897937266509876bf2c5fffe6706dc9e112d9eaf3178146
+    Grok-DeepSearch/idx-60.html: b7e1c6c022654698d18947606d07dab0e253189fa1e6bf3af99c54db22bf0d0a
+    Grok-DeepSearch/idx-63.html: 864c4f5c20a9a7b509679553af9de82331bbb7cf4f0cce63f43b0ac2a119ce6b
+    Grok-DeepSearch/idx-83.html: b10f25eefd75d037feab152e4fc85e19aa3a3c91f27a65ff876c9197c69270d6
+    Grok-DeepSearch/idx-88.html: c6ba9f0bdbf1ae26e14f5c9c32aa889634f8bae6b60a846f53955b20a8a9027c
+    Grok-DeepSearch/idx-103.html: 5e4c9bb89bdeb92adb87e4cd19dc52fc35529a2dbda8cf4035a431c1899c7607
+    Grok-DeepSearch/idx-114.html: 26905a1993e8504335361153601778b4abcefb2043523af575868f1ef7cc01c5
+    Grok-DeepSearch/idx-118.html: 8c874debd5cdf7219de3ec29e1acef274687238e272529a0e1710db54baaaf85
+    Grok-DeepSearch/idx-121.html: 85b50c5969b7f2ee24a7f604491db897e384bfcc1374c1d0da87d49d2e854346
+    Perplexity-Research/idx-19.md: 916bc0e7a2e202e306dcae1085f8408f28e681f8ae3cf620d84bfd4dbe246661
+    Perplexity-Research/idx-47.md: 82bd56aae2c880dc68c9148250863e13681a228ca26fb54f766468da45b62a35
+    Perplexity-Research/idx-48.md: 2d8c6fee261cd17624ee40928d47b6a272508a489c737043099447e1010030cc
+    Perplexity-Research/idx-52.md: 3659a203606c503ed686cc338a0cf0dc3efa9a150d28d889373f3a6bef5ac8c7
+    Perplexity-Research/idx-60.md: 3c53c8822380fd118080aae71dba2cff135701e5a25e8061a84fd77055cbec3b
+    Perplexity-Research/idx-63.md: 587d07ae0375ac41ffd0bebf1af452bbd0d06ff9c52068dd2eb1302dc4942261
+    Perplexity-Research/idx-83.md: 6a68c38317b90d2b7cdf31875cc2cba46150417087fb350db7cd7fb901b605d6
+    Perplexity-Research/idx-88.md: ab34c6e2b8ad4a2a9ecd1c7487f855ed8f98ee87273863ef903b857c3b5ff5ae
+    Perplexity-Research/idx-103.md: dabcc8ae0c66e9a15ac91f0b2b38014ae2b4dd5904d171c0dd6c202f58e00ffe
+    Perplexity-Research/idx-114.md: 9e8e52dbc8e5b5e66dd8fb444591da02ecb82875d1911a833a25a6f7ad95eb08
+    Perplexity-Research/idx-118.md: 752afc3697f9d8c8b0cc00ceb44b8eb62fd9cecde32bbd9e111bc15f258fa181
+    Perplexity-Research/idx-121.md: a9063a10d8264dad5191ad7ca11ce9a08dd66faddf02e48d3d368ed78a35585e
+    Qwen-3-Max-DeepResearch/idx-19.pdf: 4cc936bb5c6813d12bdadd11bbba2eb2f64734ce8abd34b4be18124fddf2ecde
+    Qwen-3-Max-DeepResearch/idx-47.pdf: 159d129e516af1244a545c2b043554f56c2d20b5744c2985ec3e253ca79bf000
+    Qwen-3-Max-DeepResearch/idx-48.pdf: 06f170cc8c0c029d2dcdcc43f885f1c1cbc7a06d5eb80551312cea93fe189602
+    Qwen-3-Max-DeepResearch/idx-52.pdf: 3ed1ee97e4175200ea7cb53a38df0fb440011db22d96abadf991d3d53fcb453e
+    Qwen-3-Max-DeepResearch/idx-60.pdf: 7448b850b3a63eab8140dd2f78f902c20eb1acb88e41ee6e322a1acc262e2afe
+    Qwen-3-Max-DeepResearch/idx-63.pdf: 18d9f15974b288f005b5d7501da9e7ca134aa5fad640683b059e0c8553b8e06b
+    Qwen-3-Max-DeepResearch/idx-83.pdf: 3337045b16e7b9e82558088c1628291ea9401a0a351a3c5d06dbcf59b476da75
+    Qwen-3-Max-DeepResearch/idx-88.pdf: d0d103b4832b6992941bb5792aa747588b2bfc1ee09fed6da5faa554ffb9289b
+    Qwen-3-Max-DeepResearch/idx-103.pdf: 3fa489f5ca1faef4fbcbca286e322070a47400e6919a46dcfbff977c0f1a4182
+    Qwen-3-Max-DeepResearch/idx-114.pdf: 8acb15a0094ae5d5beba50d2ebff1f3091816ed7a3ca6a430e9281ab15af898a
+    Qwen-3-Max-DeepResearch/idx-118.pdf: ff764f2b245cb3c5e05fc81ea8d4e413c38375fb01bdb6b8ba536dea215cdafc
+    Qwen-3-Max-DeepResearch/idx-121.pdf: 9e62534b850195dbd683b6271eedb1098ace3dbe43717052185e6bcaaceec698

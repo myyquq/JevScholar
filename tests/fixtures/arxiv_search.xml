@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <link href="http://arxiv.org/api/query?search_query%3Dgraph%26max_results%3D10" rel="self" type="application/atom+xml"/>
+  <title type="html">ArXiv Query: search_query=graph&amp;id_list=&amp;start=0&amp;max_results=10</title>
+  <id>http://arxiv.org/api/8Yb3kJ0lQnTmG6xPZqWv2fLh1sE</id>
+  <updated>2026-10-16T00:00:00-04:00</updated>
+  <opensearch:totalResults xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">3</opensearch:totalResults>
+  <opensearch:startIndex xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">0</opensearch:startIndex>
+  <opensearch:itemsPerPage xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">10</opensearch:itemsPerPage>
+  <entry>
+    <id>http://arxiv.org/abs/2408.14717v2</id>
+    <updated>2024-09-30T10:00:00Z</updated>
+    <published>2024-08-27T02:45:13Z</published>
+    <title>Text2SQL is Not Enough:
+  Unifying AI and Databases with TAG</title>
+    <summary>  AI systems that serve natural language questions over databases promise
+to unlock tremendous value.
+</summary>
+    <author>
+      <name>Asim Biswal</name>
+    </author>
+    <author>
+      <name>Liana Patel</name>
+      <arxiv:affiliation xmlns:arxiv="http://arxiv.org/schemas/atom">UC Berkeley</arxiv:affiliation>
+    </author>
+    <link href="http://arxiv.org/abs/2408.14717v2" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2408.14717v2" rel="related" type="application/pdf"/>
+    <arxiv:primary_category xmlns:arxiv="http://arxiv.org/schemas/atom" term="cs.DB" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DB" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2506.01234v1</id>
+    <updated>2025-06-10T17:59:59Z</updated>
+    <published>2025-06-10T17:59:59Z</published>
+    <title>Graph Agents After the Cutoff</title>
+    <summary>A paper submitted after the task cutoff.</summary>
+    <author>
+      <name>Late Author</name>
+    </author>
+    <link href="http://arxiv.org/abs/2506.01234v1" rel="alternate" type="text/html"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/cs/0112017v1</id>
+    <updated>2001-12-10T09:00:00Z</updated>
+    <published>2001-12-10T09:00:00Z</published>
+    <title>An Old-Style Identifier</title>
+    <summary>Pre-2007 identifiers carry their archive name.</summary>
+    <author>
+      <name>Early Author</name>
+    </author>
+    <link href="http://arxiv.org/abs/cs/0112017v1" rel="alternate" type="text/html"/>
+    <category term="cs.DL" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>

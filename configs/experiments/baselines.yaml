@@ -1,0 +1,29 @@
+# DeepScholar-base and the simple baselines on the dev splits, at their natural cost (no shared
+# cap): the reproduction and repair record of docs/03. Systems of a benchmark run in the listed
+# order: the as-is DS-base replays the repaired one's search trajectory from the cache, and the
+# citation repairs replay their unrepaired runs' search and screening.
+budget: {task_usd: 2.0, run_usd: 10.0, judge_run_usd: 4.0}
+
+variants:
+  june:  # June dev: every DS-base version, Simple RAG and closed-book; ResearchQA and DRB2 dev
+    benchmarks:
+      deepscholar:
+        split: dev
+        limit: 20
+        systems: [simple_rag_k20, closed_book, deepscholar_base, deepscholar_base_asis,
+                  deepscholar_ref, deepscholar_base_citefix, deepscholar_ref_citefix,
+                  deepscholar_base_intro]
+      researchqa: {split: dev, limit: 40, systems: [simple_rag_raw, closed_book, deepscholar_base]}
+      drb2: {split: dev, limit: 12, systems: [simple_rag_k20, closed_book, deepscholar_base_citefix]}
+  nov:  # Nov dev2: the paper's protocol against the paper's November numbers
+    benchmarks:
+      deepscholar:
+        split: dev2
+        limit: 20
+        systems: [simple_rag_k20, deepscholar_ref, deepscholar_ref_citefix]
+  gpt41:  # the paper's backbone through the same harness (a separate-backbone experiment)
+    executor: gpt-4.1-exec
+    offpeak_only: false
+    budget: {task_usd: 1.0, run_usd: 3.0, judge_run_usd: 0.5}
+    benchmarks:
+      deepscholar: {split: dev, limit: 3, systems: [deepscholar_ref, deepscholar_ref_citefix]}

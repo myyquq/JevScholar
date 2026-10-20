@@ -1,0 +1,31 @@
+# environments
+.venv/
+.venv-*/
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# local state (never committed)
+runs/
+cache/
+.cache/
+data/raw/
+data/derived/
+*.sqlite
+*.sqlite-*
+.env
+secrets.env
+
+# IDE
+.idea/
+
+# editor lock files
+.~lock.*#
+
+# Documents excluded from the staged repository
+docs/GOAL*
+docs/*Project_Proposal*
+docs/progress_report*
