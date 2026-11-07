@@ -129,7 +129,9 @@ def trajectory(task: Task, folder: Path) -> dict[str, Any] | None:
                 "snapshot": {k: record[k] for k in ("version", "state", "candidates", "fetched")},
                 "requested": record["requested"],
                 "executed": record["executed"],
-                "scored": not (record["forced"] or record["overridden"]),  # the policy's choice
+                "scored": not (  # the policy's own choice (a branch's taken one is not)
+                    record["forced"] or record["overridden"] or record.get("taken", False)
+                ),
                 "proxy": proxy,
                 "return": rewards.retrieval_return(recall, spent + ranking, b0),
                 "upper": bool(ranking),

@@ -307,6 +307,61 @@ def controller_trajectories(
     typer.echo(f"{out}: {len(found)} trajectories, {points} retrieval decisions")
 
 
+@controller_app.command("branches")
+def controller_branches(
+    source: Run,
+    system: Annotated[str, typer.Option(help="The source run's controlled system.")] = "ctl_fixed",
+    continuation: Annotated[
+        str, typer.Option(help="The catalog system whose policy continues each branch.")
+    ] = "ctl_fixed",
+    tasks: Annotated[int | None, typer.Option(help="Only the run's first N tasks.")] = None,
+    per_task: Annotated[int | None, typer.Option(help="At most N decision points a task.")] = None,
+    run_usd: Annotated[float, typer.Option(help="Billed cap of each branch run.")] = 0.25,
+    prefix: Annotated[str | None, typer.Option(help="Run id prefix.")] = None,
+    workers: Workers = None,
+    dry_run: Annotated[bool, typer.Option(help="Print the branch runs only.")] = False,
+) -> None:
+    """Branch every legal candidate of a train or val run's decision points (docs/06): one run
+    per (batches, kind), runs/<prefix>-b<batches>-<kind>, resumable."""
+    from jevscholar.controller.branches import continuation_policy, experiments, forks
+    from jevscholar.runner import run_experiment
+
+    path = _run_dir(source)
+    found = forks(path, system, tasks=tasks, per_task=per_task)
+    exps = experiments(
+        path, system, found, policy=continuation_policy(continuation), run_usd=run_usd,
+        prefix=prefix,
+    )  # fmt: skip
+    branches = sum(len(f.kinds) for f in found)
+    typer.echo(f"{len(found)} decision points, {branches} branches in {len(exps)} runs")
+    for run_id, exp in exps.items():
+        typer.echo(f"  runs/{run_id}: {len(exp.benchmarks['deepscholar'].ids or ())} tasks")
+    if dry_run:
+        return
+    for run_id, exp in exps.items():
+        if stopped := run_experiment(exp, RUNS / run_id, workers=workers):
+            typer.echo(f"run {run_id}: stopped early ({stopped})")
+            raise typer.Exit(1)
+        typer.echo(f"run {run_id}: complete")
+
+
+@controller_app.command("labels")
+def controller_labels(
+    runs: Annotated[list[str], typer.Argument(metavar="RUN...", help="Branch runs of one split.")],
+    out: Annotated[Path, typer.Option(help="Example JSONL (and a .points.jsonl beside it).")],
+) -> None:
+    """Soft SFT targets from branch runs: per decision point, the options with the best
+    retrieval return share the target."""
+    from jevscholar.controller.branches import examples, outcomes
+    from jevscholar.controller.d1 import write_examples
+    from jevscholar.util import write_jsonl
+
+    found, points, incomplete = examples(outcomes(_run_dir(r) for r in runs))
+    write_examples(out, found)
+    write_jsonl(out.with_suffix(".points.jsonl"), points)
+    typer.echo(f"{out}: {len(found)} examples; {incomplete} points left out (a branch missing)")
+
+
 @controller_app.command("sanity-data")
 def controller_sanity_data(
     out: Annotated[Path, typer.Argument(help="Directory for train.jsonl and dev.jsonl.")],

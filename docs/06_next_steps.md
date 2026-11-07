@@ -48,16 +48,29 @@ on-policy RL samples; gold data enters only rewards and labels, never the state 
 ### Supervised warm start (SFT)
 
 1. **Branches.** From decision points of train runs, execute every legal candidate and continue
-   each branch with the same fixed rule (`start:` restores a point; docs/05).
+   each branch with the same fixed rule (`start:` restores a point, `take:` executes the given
+   candidate there; docs/05). `jev controller branches RUN` does this for every decision the
+   rules left a choice, in finished episodes of tasks with important citations: one run per
+   (batches before the point, candidate kind), `runs/branches-<RUN>-b<batches>-<kind>`, holding
+   only the tasks whose point offers that kind. Each branch keeps the source system's cap, rules,
+   costs and actions, and the source's executor, search and seed, so it is offered exactly what
+   the source was. Only train and val runs are sources (`controller/branches.py`).
 2. **Soft targets.** Each decision's target is a distribution over its options: candidates whose
    reward is within the noise of the best share the mass, the rest get 0. Retrieval rewards are
    deterministic given the evidence, so only exact ties share. `Example.target` holds this
    distribution; training minimises the cross-entropy against it over all options, in shuffled
-   order, with each example's weight normalised over the whole optimiser step.
+   order, with each example's weight normalised over the whole optimiser step. A branch's
+   reward is its retrieval return at the end: the important citations among the writer's
+   documents, less the task's whole list spend. `jev controller labels RUN... --out FILE` writes
+   the examples (what d1 reads at the point, under its default profile) and, beside them,
+   `FILE.points.jsonl` with each point's options and returns; a point with a missing branch is
+   left out and counted.
 3. **Scale.** About 60 labelled decisions from train tasks; validation on the 9 val tasks by
    regret against the best branch, soft-target loss and calibration.
-4. **Recipe.** An `sft` entry is added to `configs/training.yaml` once its labels exist; then
-   `jev controller train sft`.
+4. **Recipe.** `sft` in `configs/training.yaml` reads `data/derived/controller/sft/train.jsonl`
+   (train branches) and `dev.jsonl` (val branches); then `jev controller train sft`. Its
+   hyperparameters are the sanity check's, not yet tuned. The val labels need a fixed-rule run on
+   val in the current decision format (`ctl-val` predates it).
 
 ### Bounded RL (adapted from GRPO)
 
@@ -80,10 +93,10 @@ Scale: a pilot of 16 trajectories (4 groups), then up to 64 if KL, rewards and a
 are stable, then up to 128 with retrieval-only trajectories. The pilot runs even if SFT shows no
 gain; a null or negative result is recorded and SFT stays a candidate.
 
-**Still to build.** The branch runner (execute each candidate from a restored point), the
-soft-label builder from branch outcomes, the RL update (ratio, clip, KL) in `controller/d1.py`,
-and an adapter reload in `jev controller serve`. The decision records, restorable points,
-sampling mode, differentiable option readout and soft-target training exist.
+**Still to build.** The RL update (ratio, clip, KL) in `controller/d1.py` and an adapter reload
+in `jev controller serve`. The decision records, restorable points, the branch runner and the
+soft-label builder (`controller/branches.py`), sampling mode, differentiable option readout and
+soft-target training exist.
 
 ## The final test
 

@@ -65,13 +65,16 @@ cap backs them up.
 
 **What is logged.** Every decision is appended to `decisions.jsonl` once executed: a snapshot of
 the state and the candidates (papers by URL into `rows.jsonl`, fetched pages counted into
-`pages.jsonl`), the requested and the executed candidate, whether it was forced or overridden,
+`pages.jsonl`), the requested and the executed candidate, whether it was forced, overridden or taken (a
+branch's, below),
 the policy's probabilities and its exact input (for d1: the request, the raw answers and the
 adapter's hash), and the list spend before the decision, of the policy's own call and after the
 action. A snapshot can be restored: a later run continues from any decision point (`start: {run,
 system, batches}`) without preparing that step again, re-reading the pages the original fetched
-for free, and is charged the spend up to that point. This is what counterfactual branches and RL
-rollouts build on (docs/06).
+for free, and is charged the spend up to that point. With `take: <kind>` the restored decision
+executes that candidate instead of asking the policy (an error where the rules do not offer it),
+logged as `taken` and never scored as a policy's choice. This is what counterfactual branches and
+RL rollouts build on (docs/06).
 
 ## The policies
 
