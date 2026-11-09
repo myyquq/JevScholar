@@ -5,8 +5,9 @@
 # Usage (from the repository):
 #   sbatch scripts/rl_round.sh                 # round 1, from the SFT adapter
 #   ROUND=2 sbatch scripts/rl_round.sh         # round 2, from round 1's adapter
+#   ROUND=2 NGROUPS=16 LR=2e-5 RUN_USD=0.4 sbatch scripts/rl_round.sh   # 64 trajectories
 # Settings (environment): ROUND (1|2), NGROUPS (4), SIZE (4), RUN_USD (0.15 per group run),
-# LR (5e-5), SOURCE (rollouts-train), SFT (runs/controller/sft/adapter), PORT (9940).
+# LR (5e-5), STEPS (4 optimiser steps), SOURCE (rollouts-train), SFT (runs/controller/sft/adapter), PORT (9940).
 #SBATCH --job-name=jev-rl
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
@@ -22,6 +23,7 @@ NGROUPS=${NGROUPS:-4}
 SIZE=${SIZE:-4}
 RUN_USD=${RUN_USD:-0.15}
 LR=${LR:-5e-5}
+STEPS=${STEPS:-4}
 SOURCE=${SOURCE:-rollouts-train}
 SFT=${SFT:-runs/controller/sft/adapter}
 PORT=${PORT:-9940}
@@ -69,4 +71,4 @@ uv run jev controller rl-data runs/"$PREFIX"-b* --out "$DATA"
 
 # 5. The update.
 scripts/train_env.sh jev controller rl-update "$DATA" --adapter "$ADAPTER" --reference "$SFT" \
-  --out "$OUT" --lr "$LR"
+  --out "$OUT" --lr "$LR" --steps "$STEPS"

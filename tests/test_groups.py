@@ -224,14 +224,16 @@ def test_only_group_runs_of_train_give_rl_data(runs):
 # --------------------------------------------------------------------------- the update
 def test_rl_terms():
     lp = torch.tensor([0.6, 0.4]).log()
-    pg, kl, ratio = rl_terms(lp, lp, 0, 0.6, 2.0, 0.2)
+    pg, kl, ratio = rl_terms(lp, lp, 0, math.log(0.6), 2.0, 0.2)
     assert (pg.item(), kl.item(), ratio.item()) == pytest.approx((-2.0, 0.0, 1.0), abs=1e-6)
-    pg, _, ratio = rl_terms(lp, lp, 0, 0.3, 1.0, 0.2)  # r = 2: the gain is clipped at 1.2
+    pg, _, ratio = rl_terms(lp, lp, 0, math.log(0.3), 1.0, 0.2)  # r = 2: the gain is clipped at 1.2
     assert (ratio.item(), pg.item()) == pytest.approx((2.0, -1.2))
-    pg, _, _ = rl_terms(lp, lp, 0, 0.3, -1.0, 0.2)  # a negative advantage is not clipped there
+    pg, _, _ = rl_terms(
+        lp, lp, 0, math.log(0.3), -1.0, 0.2
+    )  # a negative advantage is not clipped there
     assert pg.item() == pytest.approx(2.0)
     ref = torch.tensor([0.5, 0.5]).log()
-    _, kl, _ = rl_terms(lp, ref, 1, 0.4, 1.0, 0.2)
+    _, kl, _ = rl_terms(lp, ref, 1, math.log(0.4), 1.0, 0.2)
     assert kl.item() == pytest.approx(categorical_kl([0.6, 0.4], [0.5, 0.5]), rel=1e-5)
     assert categorical_kl([1.0, 0.0], [0.5, 0.5]) == pytest.approx(math.log(2))
 
@@ -293,3 +295,31 @@ def test_rl_update_reverts_above_the_kl_bound(tmp_path):
     m = rl_update(cfg, log=lambda *_: None, load=load)
     assert m["reverted"] and m["kl"] > 0.05
     assert not (out / "adapter").exists() and (out / "metrics.json").exists()
+
+
+def test_rl_update_recomputes_pi_old_with_its_own_readout(tmp_path):
+    """Logged probabilities off by the served readout's drift: recomputed, the first step's
+    ratio is exactly 1 and nothing is clipped; with the logged ones it would be."""
+    write_rl_examples(
+        tmp_path / "rl.jsonl", [RLExample(0, Q, 0, 0.3, 1.0), RLExample(1, Q, 1, 0.7, 1.0)]
+    )
+
+    def load(adapter, revision, lora=None):
+        return Tiny(torch.zeros(2, 2), lora is not None)
+
+    cfg = RLConfig(
+        data=tmp_path / "rl.jsonl", adapter=Path("a"), reference=Path("a"), out=tmp_path / "o"
+    )
+    m = rl_update(cfg.model_copy(update={"lr": 1e-6}), log=lambda *_: None, load=load)
+    assert (m["old"], m["readout_parity"]) == ("recompute", pytest.approx(0.2))
+    assert m["train"]["ratio"] == pytest.approx(1.0) and m["train"]["clipped"] == 0
+    logged = cfg.model_copy(update={"lr": 1e-6, "old": "logged", "out": tmp_path / "l"})
+    m = rl_update(logged, log=lambda *_: None, load=load)
+    assert m["train"]["clipped"] == 1.0  # ratios 0.5/0.3 and 0.5/0.7 before any update
+
+
+def test_steps_split_the_epoch():
+    from jevscholar.controller.d1 import split
+
+    assert split(list(range(10)), 4) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
+    assert split([1, 2], 4) == [[1], [2]] and split([], 4) == []

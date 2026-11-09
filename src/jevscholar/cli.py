@@ -427,12 +427,13 @@ def controller_rl_update(
     reference: Annotated[Path, typer.Option(help="The frozen KL reference (the SFT adapter).")],
     out: Annotated[Path, typer.Option(help="Output directory (adapter/, metrics.json).")],
     lr: Annotated[float, typer.Option(help="Learning rate.")] = 5e-5,
+    steps: Annotated[int, typer.Option(min=1, help="Optimiser steps in the epoch.")] = 4,
 ) -> None:
     """One bounded RL update of d1 (clipped ratio, KL to the reference); reverted (nothing
     saved) if the mean KL exceeds 0.05 nats per decision."""
     from jevscholar.controller.d1 import RLConfig, rl_update
 
-    cfg = RLConfig(data=data, adapter=adapter, reference=reference, out=out, lr=lr)
+    cfg = RLConfig(data=data, adapter=adapter, reference=reference, out=out, lr=lr, steps=steps)
     rl_update(cfg, log=typer.echo)
 
 

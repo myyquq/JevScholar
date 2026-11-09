@@ -41,7 +41,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 
@@ -436,7 +436,14 @@ def batches_of(d1: D1, examples: Sequence[Example], cfg: TrainConfig) -> list[li
 # --------------------------------------------------------------------------- bounded RL
 class RLConfig(Strict):
     """One bounded-RL update (docs/06): the clipped ratio objective on group-relative advantages,
-    plus beta times the exact categorical KL to the frozen reference."""
+    plus beta times the exact categorical KL to the frozen reference.
+
+    pi_old is by default recomputed with the training readout (the same batches, dropout off)
+    before any step, so the first step's ratio is exactly 1: the served one-row readout differs
+    from a batched bf16 one by up to a few hundredths, which would otherwise read as policy
+    change and be clipped. The logged probabilities stay the check (`readout_parity`). The epoch
+    is split into `steps` optimiser steps whatever its size, so the learning rate alone bounds
+    how far one update moves."""
 
     data: Path  # RLExample JSONL (`jev controller rl-data`)
     adapter: Path  # the adapter that sampled the data: the one updated
@@ -447,8 +454,9 @@ class RLConfig(Strict):
     clip: float = 0.2  # the ratio is clipped to [1 - clip, 1 + clip]
     beta: float = 0.05  # weight of KL(pi || pi_ref)
     kl_max: float = 0.05  # revert (do not save) above this mean KL per decision, in nats
+    steps: int = 4  # optimiser steps in the epoch
+    old: Literal["recompute", "logged"] = "recompute"  # where pi_old(chosen) comes from
     batch_tokens: int = 8192
-    accum: int = 4  # forwards per optimiser step
     max_tokens: int = MAX_TOKENS
     checkpointing: bool = True
     seed: int = 0
@@ -458,7 +466,7 @@ def rl_terms(
     lp: torch.Tensor,
     ref_lp: torch.Tensor,
     chosen: int,
-    old_prob: float,
+    old_logprob: float,
     advantage: float,
     clip: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -467,7 +475,7 @@ def rl_terms(
     r = pi(chosen) / pi_old(chosen)."""
     import torch
 
-    ratio = (lp[chosen] - math.log(old_prob)).exp()
+    ratio = (lp[chosen] - old_logprob).exp()
     surrogate = torch.minimum(ratio * advantage, ratio.clamp(1 - clip, 1 + clip) * advantage)
     kl = (lp.exp() * (lp - ref_lp)).sum()
     return -surrogate, kl, ratio
@@ -478,15 +486,16 @@ def categorical_kl(p: Sequence[float], q: Sequence[float]) -> float:
     return sum(a * (math.log(a) - math.log(max(b, 1e-12))) for a, b in zip(p, q, strict=True) if a)
 
 
-def frozen_logprobs(d1: Any, rows: Sequence[tuple], batch_tokens: int) -> list[torch.Tensor]:
-    """Option log-probabilities of encoded (ids, forms, ...) rows, without gradients, on the CPU."""
+def frozen_logprobs(d1: Any, rows: Sequence[tuple], groups: Sequence[list[int]]) -> list[Any]:
+    """Option log-probabilities of encoded (ids, forms, ...) rows, read in the given batches,
+    without gradients or dropout, on the CPU."""
     import torch
 
     out: list[Any] = [None] * len(rows)
     was_training = d1.model.training
     d1.model.eval()
     with torch.no_grad():
-        for batch in batches([len(r[0]) for r in rows], batch_tokens):
+        for batch in groups:
             lps = d1.option_logprobs([rows[i][0] for i in batch], [rows[i][1] for i in batch])
             for i, lp in zip(batch, lps, strict=True):
                 out[i] = lp.detach().float().cpu()
@@ -494,11 +503,17 @@ def frozen_logprobs(d1: Any, rows: Sequence[tuple], batch_tokens: int) -> list[t
     return out
 
 
+def split(items: Sequence[Any], parts: int) -> list[list[Any]]:
+    """`items` in at most `parts` consecutive, nearly equal chunks."""
+    size = math.ceil(len(items) / max(parts, 1))
+    return [list(items[i : i + size]) for i in range(0, len(items), size)] if items else []
+
+
 def rl_update(cfg: RLConfig, log: Any = print, load: Any = None) -> dict:
     """One epoch of the bounded RL update over cfg.data, from cfg.adapter, against the frozen
-    cfg.reference. Each optimiser step averages its decisions' loss. The adapter is saved to
-    out/adapter unless the mean KL to the reference after the update exceeds cfg.kl_max (then
-    reverted: nothing saved). `load` stands in for D1.load (tests)."""
+    cfg.reference, in cfg.steps optimiser steps (each averages its decisions' loss), dropout
+    off. The adapter is saved to out/adapter unless the mean KL to the reference after the
+    update exceeds cfg.kl_max (then reverted: nothing saved). `load` stands in for D1.load."""
     import torch
 
     load = load or D1.load
@@ -516,7 +531,10 @@ def rl_update(cfg: RLConfig, log: Any = print, load: Any = None) -> dict:
             rows.append((ids, forms, e))
     if not rows:
         raise ValueError("every RL example is longer than max_tokens")
-    ref_lps = frozen_logprobs(ref, rows, cfg.batch_tokens)
+    order = rng.sample(range(len(rows)), len(rows))
+    lengths = [len(rows[i][0]) for i in order]
+    encoded = [[order[j] for j in b] for b in batches(lengths, cfg.batch_tokens)]
+    ref_lps = frozen_logprobs(ref, rows, encoded)
     del ref
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -526,21 +544,25 @@ def rl_update(cfg: RLConfig, log: Any = print, load: Any = None) -> dict:
         d1.base.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
         )
-    start = frozen_logprobs(d1, rows, cfg.batch_tokens)
-    parity = max(
+    start = frozen_logprobs(d1, rows, encoded)  # the same batches the steps read
+    gaps = [
         abs(lp[e.chosen].exp().item() - e.old_prob)
         for lp, (_, _, e) in zip(start, rows, strict=True)
-    )
+    ]
+    if cfg.old == "recompute":
+        old = [lp[e.chosen].item() for lp, (_, _, e) in zip(start, rows, strict=True)]
+    else:
+        old = [math.log(e.old_prob) for _, _, e in rows]
 
     params = [p for p in d1.model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=0.0)
-    order = rng.sample(range(len(rows)), len(rows))
-    lengths = [len(rows[i][0]) for i in order]
-    encoded = [[order[j] for j in b] for b in batches(lengths, cfg.batch_tokens)]
-    d1.model.train()
+    d1.model.train()  # gradient checkpointing needs training mode; dropout stays off
+    for module in d1.model.modules():
+        if isinstance(module, torch.nn.Dropout):
+            module.eval()
     seen, sums = 0, {"loss": 0.0, "kl": 0.0, "ratio": 0.0, "clipped": 0}
-    for s in range(0, len(encoded), cfg.accum):
-        step = encoded[s : s + cfg.accum]
+    plan = split(encoded, cfg.steps)
+    for step in plan:
         n = sum(map(len, step))
         for batch in step:
             lps = d1.option_logprobs([rows[i][0] for i in batch], [rows[i][1] for i in batch])
@@ -548,7 +570,7 @@ def rl_update(cfg: RLConfig, log: Any = print, load: Any = None) -> dict:
             for i, lp in zip(batch, lps, strict=True):
                 e = rows[i][2]
                 ref_lp = ref_lps[i].to(lp.device)
-                pg, kl, ratio = rl_terms(lp, ref_lp, e.chosen, e.old_prob, e.advantage, cfg.clip)
+                pg, kl, ratio = rl_terms(lp, ref_lp, e.chosen, old[i], e.advantage, cfg.clip)
                 losses.append(pg + cfg.beta * kl)
                 sums["kl"] += kl.item()
                 sums["ratio"] += ratio.item()
@@ -561,19 +583,22 @@ def rl_update(cfg: RLConfig, log: Any = print, load: Any = None) -> dict:
         opt.step()
         opt.zero_grad(set_to_none=True)
 
-    end = frozen_logprobs(d1, rows, cfg.batch_tokens)
+    end = frozen_logprobs(d1, rows, encoded)
     kls = [
         categorical_kl(a.exp().tolist(), b.exp().tolist())
         for a, b in zip(end, ref_lps, strict=True)
     ]
     ratios = [
-        lp[e.chosen].exp().item() / e.old_prob for lp, (_, _, e) in zip(end, rows, strict=True)
+        math.exp(lp[e.chosen].item() - o) for lp, (_, _, e), o in zip(end, rows, old, strict=True)
     ]
     kl = sum(kls) / len(kls)
     metrics = {
         "decisions": len(rows),
         "dropped": len(data) - len(rows),
-        "readout_parity": parity,  # max |pi_start(chosen) - pi_old(chosen)|
+        "steps": len(plan),
+        "old": cfg.old,
+        "readout_parity": max(gaps),  # max |pi_start(chosen) - logged pi_old(chosen)|
+        "readout_parity_mean": sum(gaps) / len(gaps),
         "train": {k: v / seen for k, v in sums.items()},  # as each step's forward saw them
         "kl": kl,  # mean KL(pi || pi_ref) per decision after the update
         "kl_max": max(kls),

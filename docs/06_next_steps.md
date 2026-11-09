@@ -112,13 +112,22 @@ gain; a null or negative result is recorded and SFT stays a candidate.
    (`input.requests[0]`, `input.render`), the requested option and its logged probability.
    Forced, overridden and taken decisions stay out.
 3. `jev controller rl-update DATA --adapter DIR --reference SFT --out DIR` computes the
-   reference probabilities with the frozen SFT adapter, then one epoch over the decisions:
-   loss −min(r·A, clip(r, 0.8, 1.2)·A) + 0.05·KL(π‖π_ref), the exact categorical KL over the
-   options. It saves `adapter/` and `metrics.json` (mean KL, mean ratio, clip fraction, readout
+   reference probabilities with the frozen SFT adapter, then one epoch over the decisions in 4
+   optimiser steps whatever their number, dropout off: loss −min(r·A, clip(r, 0.8, 1.2)·A) +
+   0.05·KL(π‖π_ref), the exact categorical KL over the options. π_old is recomputed with the
+   training readout (the same batches) before the first step: the served one-row readout
+   differs from it by up to 0.03, which would otherwise count as policy change. It saves `adapter/` and `metrics.json` (mean KL, mean ratio, clip fraction, readout
    parity against the logged probabilities); above 0.05 nats mean KL it reverts and saves no
    adapter.
 4. Round 2 (`ROUND=2`) samples new points with round 1's adapter and updates it, the reference
    still the SFT adapter. There are at most two rounds.
+
+**Round 1** (`groups-rollouts-train-r1-*`, `controller/rl/r1`; 4 groups × 4, lr 5e-5, logged
+π_old): all 16 trajectories finished, 37 decisions, about $0.14 list. Mean KL to SFT 0.030 (one
+decision 0.058), mean ratio 0.98, clip fraction 0.32, readout parity 0.030. The rewards barely
+separate within a group (returns within 0.005–0.009, below the 0.02 SD floor; |A| ≤ 0.34), so
+the update moved d1 mostly by the learning rate, not by a clear signal. Round 2 is run larger
+(16 groups) at lr 2e-5.
 
 **Still to build.** Nothing for the pilot. Its learning rate (5e-5) is not tuned. U as the
 reward for trajectories that write a report is not used: the pilot rewards retrieval only.
