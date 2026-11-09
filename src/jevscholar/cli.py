@@ -437,6 +437,89 @@ def controller_rl_update(
     rl_update(cfg, log=typer.echo)
 
 
+@controller_app.command("regret")
+def controller_regret(
+    data: Annotated[Path, typer.Argument(help="Val labels (`jev controller labels`, dev.jsonl).")],
+    adapter: Annotated[
+        list[Path] | None, typer.Option(help="An adapter to score (repeatable).")
+    ] = None,
+    base: Annotated[bool, typer.Option(help="Also score d1 without an adapter.")] = False,
+) -> None:
+    """Decision-level comparison on branched val points: regret of each adapter's choice
+    against the best branch, expected regret, best-option rate and soft-target CE (GPU, no
+    executor calls)."""
+    from jevscholar.controller.compare import decision_scores, with_names
+    from jevscholar.controller.d1 import D1, read_examples
+    from jevscholar.controller.serve import adapter_sha
+    from jevscholar.util import read_jsonl
+
+    examples = read_examples(data)
+    points = with_names(read_jsonl(data.with_suffix(".points.jsonl")), examples)
+    chosen: list[Path | None] = ([None] if base else []) + list(adapter or [])
+    if not chosen:
+        raise typer.BadParameter("give at least one --adapter, or --base")
+    for path in chosen:
+        d1 = D1.load(adapter=path)
+        probs = [d1.probabilities([(e.state, e.question)], render=e.render)[0] for e in examples]
+        scores = decision_scores(probs, points) | {
+            "adapter": str(path) if path else None,
+            "sha256": adapter_sha(path),
+        }
+        typer.echo(json.dumps(scores))
+        del d1
+
+
+@controller_app.command("episodes")
+def controller_episodes(
+    source: Run,
+    name: Annotated[str, typer.Option(help="System name and run id suffix, e.g. d1_sft.")],
+    adapter: Annotated[
+        Path | None, typer.Option(help="The served adapter (default: none, the base d1).")
+    ] = None,
+    system: Annotated[str, typer.Option(help="The source run's controlled system.")] = "ctl_fixed",
+    run_usd: Annotated[float, typer.Option(help="Billed cap of the run.")] = 0.6,
+    prefix: Annotated[str, typer.Option(help="Run id prefix.")] = "compare",
+    workers: Workers = None,
+    dry_run: Annotated[bool, typer.Option(help="Print the run only.")] = False,
+) -> None:
+    """Run every task of a val (or train) run from the start with d1 + `adapter` choosing, as
+    system NAME in runs/<prefix>-<source>-<name>; resumable. Needs `jev controller serve
+    --adapter ADAPTER` running."""
+    from jevscholar.controller.compare import episode_experiment
+    from jevscholar.controller.serve import adapter_sha
+    from jevscholar.runner import run_experiment
+
+    path = _run_dir(source)
+    sha = adapter_sha(adapter)
+    exp = episode_experiment(path, system, name, adapter=sha, run_usd=run_usd)
+    run_id = f"{prefix}-{path.name}-{name}"
+    typer.echo(f"runs/{run_id}: {name} = d1 with adapter {sha}")
+    if dry_run:
+        return
+    if stopped := run_experiment(exp, RUNS / run_id, workers=workers):
+        typer.echo(f"run {run_id}: stopped early ({stopped})")
+        raise typer.Exit(1)
+    typer.echo(f"run {run_id}: complete")
+
+
+@controller_app.command("compare")
+def controller_compare(
+    cells: Annotated[
+        list[str], typer.Argument(metavar="RUN:SYSTEM...", help="The first is the baseline.")
+    ],
+) -> None:
+    """Per-task retrieval returns of controlled systems' episodes, paired against the first."""
+    from jevscholar.controller.compare import compare, episode_returns, table
+
+    systems = {}
+    for cell in cells:
+        run, _, system = cell.rpartition(":")
+        if not run:
+            raise typer.BadParameter(f"{cell}: give RUN:SYSTEM")
+        systems[f"{Path(run).name}:{system}"] = episode_returns(_run_dir(run), system)
+    typer.echo(table(compare(systems)))
+
+
 @controller_app.command("sanity-data")
 def controller_sanity_data(
     out: Annotated[Path, typer.Argument(help="Directory for train.jsonl and dev.jsonl.")],

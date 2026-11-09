@@ -129,6 +129,16 @@ separate within a group (returns within 0.005–0.009, below the 0.02 SD floor; 
 the update moved d1 mostly by the learning rate, not by a clear signal. Round 2 is run larger
 (16 groups) at lr 2e-5.
 
+**Comparing on val** (`controller/compare.py`, `scripts/val_compare.sh`; judge-free, val tasks
+never become RL data):
+- *Decisions.* On the 36 branched val points (`dev.jsonl`), each adapter's served choice
+  (`finish` at P ≥ 0.5, else the most probable) against the best branch: regret, expected
+  regret of its distribution, best-option rate, soft-target CE. Only d1 runs; no executor call.
+- *Episodes.* Every val task from the start with each adapter choosing
+  (`runs/compare-rollouts-val-<name>`), scored by the retrieval return and paired per task
+  against the fixed rule's own val run (`rollouts-val`): mean difference ± SE, tasks won, tied
+  and lost. Report-level U (judged) is a later, costlier check.
+
 **Still to build.** Nothing for the pilot. Its learning rate (5e-5) is not tuned. U as the
 reward for trajectories that write a report is not used: the pilot rewards retrieval only.
 

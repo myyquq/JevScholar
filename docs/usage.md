@@ -66,6 +66,12 @@ uv run jev controller rl-data RUN ... --out FILE          # returns, advantages,
 scripts/train_env.sh jev controller rl-update DATA.jsonl --adapter DIR --reference SFT_DIR --out DIR
                                        # one bounded RL update; reverted above 0.05 nats KL
 ROUND=1 sbatch scripts/rl_round.sh     # one RL round as a GPU job: serve, groups, rl-data, update
+scripts/train_env.sh jev controller regret DEV.jsonl --adapter DIR ... [--base]
+                                       # val decision regret against branch returns (no executor)
+uv run jev controller episodes RUN --name NAME [--adapter DIR] [--run-usd X] [--dry-run]
+                                       # every task of a val run from the start, d1 choosing
+uv run jev controller compare RUN:SYSTEM ...              # paired retrieval returns, first = baseline
+sbatch scripts/val_compare.sh          # d1-sft vs d1-rl on val: regret, episodes, comparison
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
@@ -214,3 +220,4 @@ older format that `jev controller trajectories` does not read.
 | `controller/sft` | the SFT warm start (2 epochs; the adapter RL starts from) |
 | `groups-<RUN>-r<round>-b<batches>` | RL groups: g0..g3 sampled from a train run's decision points (docs/06) |
 | `controller/rl/r<round>` | a bounded RL update: `adapter/` (absent if reverted), `metrics.json` |
+| `compare-<RUN>-<name>` | val episodes with one adapter choosing (docs/06: comparing on val) |
