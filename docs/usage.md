@@ -59,6 +59,13 @@ uv run jev controller trajectories RUN ... [--out FILE]   # labelled decisions o
 uv run jev controller branches RUN [--system ctl_fixed] [--tasks N] [--per-task N] [--run-usd X] [--dry-run]
                                        # branch every legal candidate of a train/val run's points
 uv run jev controller labels RUN ... --out FILE           # soft SFT targets from branch runs
+uv run jev controller groups RUN --adapter DIR [--groups 4] [--size 4] [--round 1|2] [--run-usd X] [--dry-run]
+                                       # RL groups: sample trajectories from a train run's points
+                                       # (needs `controller serve --adapter DIR` running)
+uv run jev controller rl-data RUN ... --out FILE          # returns, advantages, RL examples
+scripts/train_env.sh jev controller rl-update DATA.jsonl --adapter DIR --reference SFT_DIR --out DIR
+                                       # one bounded RL update; reverted above 0.05 nats KL
+ROUND=1 sbatch scripts/rl_round.sh     # one RL round as a GPU job: serve, groups, rl-data, update
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
@@ -204,3 +211,6 @@ older format that `jev controller trajectories` does not read.
 | `eval-dev`, `eval-dev2` | the controller comparisons on June dev and Nov dev2 (docs/05) |
 | `controller/sanity`, `controller/sweep-1` | the LoRA training-loop check and the offline prompt search |
 | `branches-<RUN>-b<batches>-<kind>` | counterfactual branches of a train or val run's decision points (docs/06) |
+| `controller/sft` | the SFT warm start (2 epochs; the adapter RL starts from) |
+| `groups-<RUN>-r<round>-b<batches>` | RL groups: g0..g3 sampled from a train run's decision points (docs/06) |
+| `controller/rl/r<round>` | a bounded RL update: `adapter/` (absent if reverted), `metrics.json` |

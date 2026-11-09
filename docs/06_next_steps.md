@@ -93,10 +93,35 @@ Scale: a pilot of 16 trajectories (4 groups), then up to 64 if KL, rewards and a
 are stable, then up to 128 with retrieval-only trajectories. The pilot runs even if SFT shows no
 gain; a null or negative result is recorded and SFT stays a candidate.
 
-**Still to build.** The RL update (ratio, clip, KL) in `controller/d1.py` and an adapter reload
-in `jev controller serve`. The decision records, restorable points, the branch runner and the
-soft-label builder (`controller/branches.py`), sampling mode, differentiable option readout and
-soft-target training exist.
+**How it runs** (`controller/groups.py`, `rl_update` in `controller/d1.py`,
+`scripts/rl_round.sh`; one GPU job per round):
+
+1. `jev controller groups RUN --adapter DIR --round R` picks `--groups` decision points of a
+   train run (`branches.forks`: choices the rules left open, in finished episodes of tasks with
+   important citations; at most one per task, a fixed pick per round) and makes one run per
+   `start.batches` value, `runs/groups-<RUN>-r<R>-b<batches>`, whose `ids` are the tasks picked
+   at that value. Its members g0..g3 restore the point and sample with
+   `policy: {kind: d1, sample: true, adapter: <sha256>}`; sampling is seeded by
+   `ctx.tag('control')`, which holds the system's name, so each member samples on its own. The
+   served adapter must be the named one (the policy checks `/info`).
+2. `jev controller rl-data RUN... --out FILE` scores each member with the retrieval return (as
+   the branch labels are: important citations among the writer's documents, less the task's
+   whole list spend), and gives A = (R − mean) / max(SD, 0.02) per group (population SD). A group
+   with a missing or failed member, or whose returns span less than 0.001, is skipped. Every
+   decision the policy made becomes an example: exactly what d1 read
+   (`input.requests[0]`, `input.render`), the requested option and its logged probability.
+   Forced, overridden and taken decisions stay out.
+3. `jev controller rl-update DATA --adapter DIR --reference SFT --out DIR` computes the
+   reference probabilities with the frozen SFT adapter, then one epoch over the decisions:
+   loss −min(r·A, clip(r, 0.8, 1.2)·A) + 0.05·KL(π‖π_ref), the exact categorical KL over the
+   options. It saves `adapter/` and `metrics.json` (mean KL, mean ratio, clip fraction, readout
+   parity against the logged probabilities); above 0.05 nats mean KL it reverts and saves no
+   adapter.
+4. Round 2 (`ROUND=2`) samples new points with round 1's adapter and updates it, the reference
+   still the SFT adapter. There are at most two rounds.
+
+**Still to build.** Nothing for the pilot. Its learning rate (5e-5) is not tuned. U as the
+reward for trajectories that write a report is not used: the pilot rewards retrieval only.
 
 ## The final test
 

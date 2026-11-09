@@ -35,6 +35,7 @@ import importlib.util
 import json
 import math
 import random
+import shutil
 import sys
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
@@ -138,6 +139,37 @@ def read_examples(path: Path) -> list[Example]:
 
 
 def write_examples(path: Path, examples: Iterable[Example]) -> None:
+    write_jsonl(path, map(asdict, examples))
+
+
+@dataclass(frozen=True)
+class RLExample:
+    """A decision a sampling policy made (controller/groups.py): exactly what d1 read (state,
+    question in the order it saw, render), the option it chose, that option's probability then
+    and the trajectory's group-relative advantage."""
+
+    state: Any
+    question: dict[str, Any]
+    chosen: int  # index into the question's options
+    old_prob: float
+    advantage: float
+    render: dict[str, str] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)  # where it came from (not read by d1)
+
+    def __post_init__(self) -> None:
+        if self.question.get("type", "choice") != "choice":
+            raise ValueError("only choice questions are trained")
+        if not 0 <= self.chosen < len(self.question["criteria"]):
+            raise ValueError(f"option {self.chosen} is not among the question's options")
+        if not 0 < self.old_prob <= 1:
+            raise ValueError(f"the chosen option's probability {self.old_prob} is not in (0, 1]")
+
+
+def read_rl_examples(path: Path) -> list[RLExample]:
+    return [RLExample(**e) for e in read_jsonl(path)]
+
+
+def write_rl_examples(path: Path, examples: Iterable[RLExample]) -> None:
     write_jsonl(path, map(asdict, examples))
 
 
@@ -399,3 +431,163 @@ def batches_of(d1: D1, examples: Sequence[Example], cfg: TrainConfig) -> list[li
         if len(ids) <= cfg.max_tokens:
             rows.append((ids, forms, e.targets(), e.weight))
     return [[rows[i] for i in b] for b in batches([len(r[0]) for r in rows], cfg.batch_tokens)]
+
+
+# --------------------------------------------------------------------------- bounded RL
+class RLConfig(Strict):
+    """One bounded-RL update (docs/06): the clipped ratio objective on group-relative advantages,
+    plus beta times the exact categorical KL to the frozen reference."""
+
+    data: Path  # RLExample JSONL (`jev controller rl-data`)
+    adapter: Path  # the adapter that sampled the data: the one updated
+    reference: Path  # the SFT adapter: the frozen KL reference
+    out: Path  # adapter/ (unless reverted), metrics.json, config.json
+    revision: str = REVISION
+    lr: float = 5e-5
+    clip: float = 0.2  # the ratio is clipped to [1 - clip, 1 + clip]
+    beta: float = 0.05  # weight of KL(pi || pi_ref)
+    kl_max: float = 0.05  # revert (do not save) above this mean KL per decision, in nats
+    batch_tokens: int = 8192
+    accum: int = 4  # forwards per optimiser step
+    max_tokens: int = MAX_TOKENS
+    checkpointing: bool = True
+    seed: int = 0
+
+
+def rl_terms(
+    lp: torch.Tensor,
+    ref_lp: torch.Tensor,
+    chosen: int,
+    old_prob: float,
+    advantage: float,
+    clip: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """(policy loss, KL(pi || pi_ref), ratio) of one decision, from the option log-probabilities
+    now (`lp`, differentiable) and under the reference: the loss is -min(r A, clip(r) A), with
+    r = pi(chosen) / pi_old(chosen)."""
+    import torch
+
+    ratio = (lp[chosen] - math.log(old_prob)).exp()
+    surrogate = torch.minimum(ratio * advantage, ratio.clamp(1 - clip, 1 + clip) * advantage)
+    kl = (lp.exp() * (lp - ref_lp)).sum()
+    return -surrogate, kl, ratio
+
+
+def categorical_kl(p: Sequence[float], q: Sequence[float]) -> float:
+    """KL(p || q) in nats."""
+    return sum(a * (math.log(a) - math.log(max(b, 1e-12))) for a, b in zip(p, q, strict=True) if a)
+
+
+def frozen_logprobs(d1: Any, rows: Sequence[tuple], batch_tokens: int) -> list[torch.Tensor]:
+    """Option log-probabilities of encoded (ids, forms, ...) rows, without gradients, on the CPU."""
+    import torch
+
+    out: list[Any] = [None] * len(rows)
+    was_training = d1.model.training
+    d1.model.eval()
+    with torch.no_grad():
+        for batch in batches([len(r[0]) for r in rows], batch_tokens):
+            lps = d1.option_logprobs([rows[i][0] for i in batch], [rows[i][1] for i in batch])
+            for i, lp in zip(batch, lps, strict=True):
+                out[i] = lp.detach().float().cpu()
+    d1.model.train(was_training)
+    return out
+
+
+def rl_update(cfg: RLConfig, log: Any = print, load: Any = None) -> dict:
+    """One epoch of the bounded RL update over cfg.data, from cfg.adapter, against the frozen
+    cfg.reference. Each optimiser step averages its decisions' loss. The adapter is saved to
+    out/adapter unless the mean KL to the reference after the update exceeds cfg.kl_max (then
+    reverted: nothing saved). `load` stands in for D1.load (tests)."""
+    import torch
+
+    load = load or D1.load
+    torch.manual_seed(cfg.seed)
+    rng = random.Random(cfg.seed)
+    data = read_rl_examples(cfg.data)
+    if not data:
+        raise ValueError("the RL update needs examples")
+
+    ref = load(adapter=cfg.reference, revision=cfg.revision)
+    rows = []  # (ids, forms, example)
+    for e in data:
+        ids, forms = ref.encode(e.state, e.question, e.render)
+        if len(ids) <= cfg.max_tokens:
+            rows.append((ids, forms, e))
+    if not rows:
+        raise ValueError("every RL example is longer than max_tokens")
+    ref_lps = frozen_logprobs(ref, rows, cfg.batch_tokens)
+    del ref
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    d1 = load(adapter=cfg.adapter, lora={}, revision=cfg.revision)  # trainable
+    if cfg.checkpointing and hasattr(d1.base, "gradient_checkpointing_enable"):
+        d1.base.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
+    start = frozen_logprobs(d1, rows, cfg.batch_tokens)
+    parity = max(
+        abs(lp[e.chosen].exp().item() - e.old_prob)
+        for lp, (_, _, e) in zip(start, rows, strict=True)
+    )
+
+    params = [p for p in d1.model.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=0.0)
+    order = rng.sample(range(len(rows)), len(rows))
+    lengths = [len(rows[i][0]) for i in order]
+    encoded = [[order[j] for j in b] for b in batches(lengths, cfg.batch_tokens)]
+    d1.model.train()
+    seen, sums = 0, {"loss": 0.0, "kl": 0.0, "ratio": 0.0, "clipped": 0}
+    for s in range(0, len(encoded), cfg.accum):
+        step = encoded[s : s + cfg.accum]
+        n = sum(map(len, step))
+        for batch in step:
+            lps = d1.option_logprobs([rows[i][0] for i in batch], [rows[i][1] for i in batch])
+            losses = []
+            for i, lp in zip(batch, lps, strict=True):
+                e = rows[i][2]
+                ref_lp = ref_lps[i].to(lp.device)
+                pg, kl, ratio = rl_terms(lp, ref_lp, e.chosen, e.old_prob, e.advantage, cfg.clip)
+                losses.append(pg + cfg.beta * kl)
+                sums["kl"] += kl.item()
+                sums["ratio"] += ratio.item()
+                sums["clipped"] += abs(ratio.item() - 1) > cfg.clip
+            loss = torch.stack(losses).sum()
+            (loss / n).backward()
+            sums["loss"] += loss.item()
+            seen += len(batch)
+        torch.nn.utils.clip_grad_norm_(params, 1.0)
+        opt.step()
+        opt.zero_grad(set_to_none=True)
+
+    end = frozen_logprobs(d1, rows, cfg.batch_tokens)
+    kls = [
+        categorical_kl(a.exp().tolist(), b.exp().tolist())
+        for a, b in zip(end, ref_lps, strict=True)
+    ]
+    ratios = [
+        lp[e.chosen].exp().item() / e.old_prob for lp, (_, _, e) in zip(end, rows, strict=True)
+    ]
+    kl = sum(kls) / len(kls)
+    metrics = {
+        "decisions": len(rows),
+        "dropped": len(data) - len(rows),
+        "readout_parity": parity,  # max |pi_start(chosen) - pi_old(chosen)|
+        "train": {k: v / seen for k, v in sums.items()},  # as each step's forward saw them
+        "kl": kl,  # mean KL(pi || pi_ref) per decision after the update
+        "kl_max": max(kls),
+        "ratio": sum(ratios) / len(ratios),  # mean pi(chosen) / pi_old(chosen) after the update
+        "clip_fraction": sum(abs(r - 1) > cfg.clip for r in ratios) / len(ratios),
+        "reverted": kl > cfg.kl_max,
+    }
+    cfg.out.mkdir(parents=True, exist_ok=True)
+    atomic_write(cfg.out / "config.json", cfg.model_dump_json(indent=2))
+    if metrics["reverted"]:
+        shutil.rmtree(cfg.out / "adapter", ignore_errors=True)  # never leave an earlier try's
+        log(f"mean KL {kl:.4f} > {cfg.kl_max}: reverted, no adapter saved")
+    else:
+        d1.model.save_pretrained(str(cfg.out / "adapter"))
+    atomic_write(cfg.out / "metrics.json", json.dumps(metrics, indent=2))
+    log(json.dumps(metrics, indent=2))
+    return metrics

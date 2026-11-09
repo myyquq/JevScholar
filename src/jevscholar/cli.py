@@ -362,6 +362,80 @@ def controller_labels(
     typer.echo(f"{out}: {len(found)} examples; {incomplete} points left out (a branch missing)")
 
 
+@controller_app.command("groups")
+def controller_groups(
+    source: Run,
+    adapter: Annotated[Path, typer.Option(help="The served adapter directory (sampling policy).")],
+    system: Annotated[str, typer.Option(help="The source run's controlled system.")] = "ctl_fixed",
+    groups: Annotated[int, typer.Option(help="Decision points (groups) to sample.")] = 4,
+    size: Annotated[int, typer.Option(help="Trajectories per group.")] = 4,
+    rl_round: Annotated[
+        int, typer.Option("--round", min=1, max=2, help="The RL round (picks the points).")
+    ] = 1,
+    run_usd: Annotated[float, typer.Option(help="Billed cap of each group run.")] = 0.15,
+    prefix: Annotated[str | None, typer.Option(help="Run id prefix.")] = None,
+    workers: Workers = None,
+    dry_run: Annotated[bool, typer.Option(help="Print the group runs only.")] = False,
+) -> None:
+    """Sample `size` trajectories from each of `groups` decision points of a train run with the
+    served adapter (docs/06, bounded RL): one run per batches value,
+    runs/<prefix>-b<batches>, members g0, g1, ...; resumable. Needs `jev controller serve
+    --adapter ADAPTER` running."""
+    from jevscholar.controller.groups import experiments, points
+    from jevscholar.controller.serve import adapter_sha
+    from jevscholar.runner import run_experiment
+
+    path = _run_dir(source)
+    sha = adapter_sha(adapter)
+    found = points(path, system, groups, rl_round)
+    prefix = prefix or f"groups-{path.name}-r{rl_round}"
+    exps = experiments(path, system, found, adapter=sha, run_usd=run_usd, size=size, prefix=prefix)
+    typer.echo(f"{len(found)} groups of {size} ({len(found) * size} trajectories), adapter {sha}")
+    for run_id, exp in exps.items():
+        typer.echo(f"  runs/{run_id}: {list(exp.benchmarks['deepscholar'].ids or ())}")
+    if dry_run:
+        return
+    for run_id, exp in exps.items():
+        if stopped := run_experiment(exp, RUNS / run_id, workers=workers):
+            typer.echo(f"run {run_id}: stopped early ({stopped})")
+            raise typer.Exit(1)
+        typer.echo(f"run {run_id}: complete")
+
+
+@controller_app.command("rl-data")
+def controller_rl_data(
+    runs: Annotated[list[str], typer.Argument(metavar="RUN...", help="Group runs of one round.")],
+    out: Annotated[Path, typer.Option(help="RLExample JSONL (and a .groups.jsonl beside it).")],
+) -> None:
+    """RL examples from group runs: each trajectory's retrieval return, its group-relative
+    advantage, and every decision the policy made in it."""
+    from jevscholar.controller.d1 import write_rl_examples
+    from jevscholar.controller.groups import advantages, examples, outcomes
+    from jevscholar.util import write_jsonl
+
+    groups, skipped = advantages(outcomes(_run_dir(r) for r in runs))
+    found = examples(groups)
+    write_rl_examples(out, found)
+    write_jsonl(out.with_suffix(".groups.jsonl"), groups)
+    typer.echo(f"{out}: {len(found)} decisions from {len(groups)} groups; skipped {skipped}")
+
+
+@controller_app.command("rl-update")
+def controller_rl_update(
+    data: Annotated[Path, typer.Argument(help="RLExample JSONL (`jev controller rl-data`).")],
+    adapter: Annotated[Path, typer.Option(help="The adapter that sampled the data.")],
+    reference: Annotated[Path, typer.Option(help="The frozen KL reference (the SFT adapter).")],
+    out: Annotated[Path, typer.Option(help="Output directory (adapter/, metrics.json).")],
+    lr: Annotated[float, typer.Option(help="Learning rate.")] = 5e-5,
+) -> None:
+    """One bounded RL update of d1 (clipped ratio, KL to the reference); reverted (nothing
+    saved) if the mean KL exceeds 0.05 nats per decision."""
+    from jevscholar.controller.d1 import RLConfig, rl_update
+
+    cfg = RLConfig(data=data, adapter=adapter, reference=reference, out=out, lr=lr)
+    rl_update(cfg, log=typer.echo)
+
+
 @controller_app.command("sanity-data")
 def controller_sanity_data(
     out: Annotated[Path, typer.Argument(help="Directory for train.jsonl and dev.jsonl.")],

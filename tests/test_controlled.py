@@ -522,6 +522,37 @@ def test_a_branch_takes_its_candidate_then_continues(gateway, lotus_fakes, tmp_p
         run_task(gateway, tmp_path / "n", fixed, 1.0, start=start | {"take": "deepen"})
 
 
+def test_a_group_member_samples_from_a_point_and_logs_rl_examples(
+    gateway, lotus_fakes, d1_server, tmp_path, monkeypatch
+):
+    from jevscholar.controller.groups import decision_example
+
+    fixed = {"kind": "fixed", "batches": 3}
+    _, steps, _ = run_task(gateway, tmp_path / "o", fixed, 1.0)
+    source = tmp_path / "runs" / "src" / "deepscholar" / "ctl" / "tasks" / "g"
+    source.mkdir(parents=True)
+    for name in ("decisions.jsonl", "rows.jsonl", "pages.jsonl"):
+        (source / name).write_text((tmp_path / "o" / name).read_text())
+    monkeypatch.setattr(paths, "RUNS", tmp_path / "runs")
+    policy = {"kind": "d1", "url": d1_server.url, "sample": True}
+    start = {"run": "src", "system": "ctl", "batches": 1}
+    _, member, _ = run_task(gateway, tmp_path / "g", policy, 1.0, start=start)
+    first = member[0]
+    assert not (first["taken"] or first["forced"])  # the restored point is asked, not taken
+    assert first["candidates"] == steps[1]["candidates"]
+    asked = [s for s in member if not (s["forced"] or s["overridden"] or s["taken"])]
+    found = [decision_example(s, 0.5, None, {}) for s in member]
+    assert [e for e in found if e is not None] and len([e for e in found if e]) == len(asked)
+    e = next(e for e in found if e is not None)
+    request = first["input"]["requests"][0]
+    assert (e.state, e.question, e.render) == (
+        request["state"],
+        request["questions"][0],
+        first["input"]["render"],
+    )
+    assert (e.chosen, e.old_prob) == (first["requested"], first["probs"][first["requested"]])
+
+
 def test_a_start_without_take_keeps_its_identity():
     """Runs continued from a decision point before `take` existed keep their cell identity."""
     start = {"run": "src", "system": "ctl", "batches": 1}
