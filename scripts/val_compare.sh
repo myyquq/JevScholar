@@ -20,7 +20,7 @@
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 
-ADAPTERS=${ADAPTERS:-"d1_sft=runs/controller/sft/adapter d1_rl1=runs/controller/rl/r1/adapter d1_rl2=runs/controller/rl/r2/adapter"}
+ADAPTERS=${ADAPTERS:-"d1_sft=runs/controller/sft/adapter d1_rl1=runs/controller/rl/r1/adapter d1_rl2=runs/controller/rl/r2/adapter d1_first1=runs/controller/rl/first/r1/adapter d1_first2=runs/controller/rl/first/r2/adapter"}
 SOURCE=${SOURCE:-rollouts-val}
 DATA=${DATA:-data/derived/controller/sft/dev.jsonl}
 RUN_USD=${RUN_USD:-0.6}

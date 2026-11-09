@@ -129,6 +129,26 @@ separate within a group (returns within 0.005–0.009, below the 0.02 SD floor; 
 the update moved d1 mostly by the learning rate, not by a clear signal. Round 2 is run larger
 (16 groups) at lr 2e-5.
 
+**Pilot result on val** (`val-compare`, 9 tasks, retrieval return paired with the fixed rule's
+0.0102): d1-sft 0.0084, d1-rl r1 0.0090, d1-rl r2 0.0081 (each ± 0.0025, not resolved). The
+three d1 versions ran identical episodes on 7 of 9 tasks and found the same important
+citations (recall 0.141 against the fixed rule's 0.121); they differ only in when they stop.
+Decision regret on the 36 branched val points: 0.0038, 0.0039, 0.0037. RL moved the
+probabilities (KL 0.03) but rarely d1's choice: a null result at this scale.
+
+**Why, and the next try.** Most choices change nothing: a batch of 10 rarely holds an important
+citation, so most options' returns differ only by a batch's cost (about 0.002). Of the 135
+branched train points, 46 have option returns more than 0.01 apart (19 more than 0.02); of the
+36 val points, 14. The pilot sampled points without regard to this, and let d1 sample every
+later decision too, which diluted the one choice that mattered. The next try
+(`--first-only --min-spread 0.01 --per-task 0`, `NAME=first`): groups only at points whose
+branch returns differ, d1 sampling the restored point only and the fixed rule continuing, as
+the branches do (`policy: {kind: first, first: <d1>, then: <fixed>}`). Each member's return then
+differs only by that choice, and its continuation replays the branch's executor calls. These
+are new on-policy samples, not the branches themselves (data rules above). On val, `regret`
+also reports the `signal` points (option returns more than 0.01 apart) and each distribution's
+expected return against a uniform choice.
+
 **Comparing on val** (`controller/compare.py`, `scripts/val_compare.sh`; judge-free, val tasks
 never become RL data):
 - *Decisions.* On the 36 branched val points (`dev.jsonl`), each adapter's served choice

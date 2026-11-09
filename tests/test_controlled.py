@@ -553,6 +553,26 @@ def test_a_group_member_samples_from_a_point_and_logs_rl_examples(
     assert (e.chosen, e.old_prob) == (first["requested"], first["probs"][first["requested"]])
 
 
+def test_a_first_only_member_asks_d1_once_then_follows_the_fixed_rule(
+    gateway, lotus_fakes, d1_server, tmp_path, monkeypatch
+):
+    fixed = {"kind": "fixed", "batches": 3}
+    run_task(gateway, tmp_path / "o", fixed, 1.0)
+    source = tmp_path / "runs" / "src" / "deepscholar" / "ctl" / "tasks" / "f"
+    source.mkdir(parents=True)
+    for name in ("decisions.jsonl", "rows.jsonl", "pages.jsonl"):
+        (source / name).write_text((tmp_path / "o" / name).read_text())
+    monkeypatch.setattr(paths, "RUNS", tmp_path / "runs")
+    d1 = {"kind": "d1", "url": d1_server.url, "sample": True}
+    policy = {"kind": "first", "first": d1, "then": fixed}
+    start = {"run": "src", "system": "ctl", "batches": 1}
+    _, member, _ = run_task(gateway, tmp_path / "f", policy, 1.0, start=start)
+    asked = [s for s in member if not (s["forced"] or s["overridden"] or s["taken"])]
+    assert asked[0]["input"]["requests"] and asked[0]["probs"]  # d1's, at the restored point
+    assert all(s["input"] is None and s["probs"] is None for s in asked[1:])  # the fixed rule's
+    assert member[-1]["state"]["batches"] <= 3
+
+
 def test_a_start_without_take_keeps_its_identity():
     """Runs continued from a decision point before `take` existed keep their cell identity."""
     start = {"run": "src", "system": "ctl", "batches": 1}

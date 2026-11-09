@@ -374,6 +374,20 @@ def controller_groups(
     ] = 1,
     run_usd: Annotated[float, typer.Option(help="Billed cap of each group run.")] = 0.15,
     prefix: Annotated[str | None, typer.Option(help="Run id prefix.")] = None,
+    first_only: Annotated[
+        bool, typer.Option(help="d1 samples the restored point only; the fixed rule continues.")
+    ] = False,
+    continuation: Annotated[
+        str, typer.Option(help="The catalog system whose policy continues (--first-only).")
+    ] = "ctl_fixed",
+    min_spread: Annotated[
+        float | None,
+        typer.Option(help="Only points whose branch returns span more than this (--labels)."),
+    ] = None,
+    labels: Annotated[
+        Path, typer.Option(help="Branch points (`labels` .points.jsonl) for --min-spread.")
+    ] = DATA_DERIVED / "controller" / "sft" / "train.points.jsonl",
+    per_task: Annotated[int, typer.Option(help="Points per task at most (0: no limit).")] = 1,
     workers: Workers = None,
     dry_run: Annotated[bool, typer.Option(help="Print the group runs only.")] = False,
 ) -> None:
@@ -381,16 +395,26 @@ def controller_groups(
     served adapter (docs/06, bounded RL): one run per batches value,
     runs/<prefix>-b<batches>, members g0, g1, ...; resumable. Needs `jev controller serve
     --adapter ADAPTER` running."""
-    from jevscholar.controller.groups import experiments, points
+    from jevscholar.controller.branches import continuation_policy
+    from jevscholar.controller.groups import experiments, points, spreads
     from jevscholar.controller.serve import adapter_sha
     from jevscholar.runner import run_experiment
 
     path = _run_dir(source)
     sha = adapter_sha(adapter)
-    found = points(path, system, groups, rl_round)
+    spread = None if min_spread is None else spreads(labels, path.name)
+    found = points(
+        path, system, groups, rl_round, spread=spread, min_spread=min_spread or 0.0,
+        per_task=per_task or None,
+    )  # fmt: skip
+    then = continuation_policy(continuation) if first_only else None
     prefix = prefix or f"groups-{path.name}-r{rl_round}"
-    exps = experiments(path, system, found, adapter=sha, run_usd=run_usd, size=size, prefix=prefix)
+    exps = experiments(
+        path, system, found, adapter=sha, run_usd=run_usd, size=size, prefix=prefix, then=then
+    )
+    mode = "first decision only, then the fixed rule" if first_only else "every decision"
     typer.echo(f"{len(found)} groups of {size} ({len(found) * size} trajectories), adapter {sha}")
+    typer.echo(f"d1 samples {mode}")
     for run_id, exp in exps.items():
         typer.echo(f"  runs/{run_id}: {list(exp.benchmarks['deepscholar'].ids or ())}")
     if dry_run:
@@ -444,6 +468,9 @@ def controller_regret(
         list[Path] | None, typer.Option(help="An adapter to score (repeatable).")
     ] = None,
     base: Annotated[bool, typer.Option(help="Also score d1 without an adapter.")] = False,
+    min_spread: Annotated[
+        float, typer.Option(help="`signal`: points whose option returns span more than this.")
+    ] = 0.01,
 ) -> None:
     """Decision-level comparison on branched val points: regret of each adapter's choice
     against the best branch, expected regret, best-option rate and soft-target CE (GPU, no
@@ -461,7 +488,7 @@ def controller_regret(
     for path in chosen:
         d1 = D1.load(adapter=path)
         probs = [d1.probabilities([(e.state, e.question)], render=e.render)[0] for e in examples]
-        scores = decision_scores(probs, points) | {
+        scores = decision_scores(probs, points, min_spread=min_spread) | {
             "adapter": str(path) if path else None,
             "sha256": adapter_sha(path),
         }

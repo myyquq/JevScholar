@@ -98,3 +98,15 @@ def test_paired_comparison_of_episode_returns(source, monkeypatch):  # noqa: F81
     assert "| rl | 1 |" in cmp.table(rows)
     with pytest.raises(ValueError, match="no deepscholar/x cell"):
         cmp.episode_returns(d1, "x")
+
+
+def test_signal_points_and_expected_return():
+    flat = {"task": "t2", "batches": 0, "kinds": ["abstract", "finish"], "returns": [0.01, 0.012]}
+    points = [*POINTS, flat | {"target": {}}]
+    s = cmp.decision_scores([[0.9, 0.1], [0.4, 0.6], [0.5, 0.5]], points, min_spread=0.005)
+    assert s["points"] == 3 and s["signal"]["points"] == 2  # the flat point is left out
+    assert s["signal"]["regret"] == 0 and s["min_spread"] == 0.005
+    # expected return against a uniform choice: +0.004 and +0.002 at the signal points
+    assert s["signal"]["expected_return"] == pytest.approx((0.004 + 0.002) / 2)
+    assert s["expected_return"] == pytest.approx((0.004 + 0.002 + 0.0) / 3)
+    assert cmp.decision_scores([[0.5, 0.5]], [flat | {"target": {}}])["signal"] is None

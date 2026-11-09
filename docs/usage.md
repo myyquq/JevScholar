@@ -59,7 +59,8 @@ uv run jev controller trajectories RUN ... [--out FILE]   # labelled decisions o
 uv run jev controller branches RUN [--system ctl_fixed] [--tasks N] [--per-task N] [--run-usd X] [--dry-run]
                                        # branch every legal candidate of a train/val run's points
 uv run jev controller labels RUN ... --out FILE           # soft SFT targets from branch runs
-uv run jev controller groups RUN --adapter DIR [--groups 4] [--size 4] [--round 1|2] [--run-usd X] [--dry-run]
+uv run jev controller groups RUN --adapter DIR [--groups 4] [--size 4] [--round 1|2] [--run-usd X]
+    [--first-only] [--min-spread 0.01] [--per-task N] [--dry-run]
                                        # RL groups: sample trajectories from a train run's points
                                        # (needs `controller serve --adapter DIR` running)
 uv run jev controller rl-data RUN ... --out FILE          # returns, advantages, RL examples
@@ -220,4 +221,5 @@ older format that `jev controller trajectories` does not read.
 | `controller/sft` | the SFT warm start (2 epochs; the adapter RL starts from) |
 | `groups-<RUN>-r<round>-b<batches>` | RL groups: g0..g3 sampled from a train run's decision points (docs/06) |
 | `controller/rl/r<round>` | a bounded RL update: `adapter/` (absent if reverted), `metrics.json` |
+| `groups-<RUN>-first-r<round>-b<batches>`, `controller/rl/first/r<round>` | the first-only RL variant at points that matter (docs/06) |
 | `compare-<RUN>-<name>` | val episodes with one adapter choosing (docs/06: comparing on val) |

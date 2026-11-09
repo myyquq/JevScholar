@@ -134,6 +134,9 @@ class Controlled(System):
         """The policy with its defaults (d1's profile) resolved, as well as the parameters (where
         the d1 server listens is not part of it)."""
         policy = make_policy(self.p.policy).model_dump(mode="json", exclude={"url"})
+        for part in ("first", "then"):  # a FirstThen's parts (no other policy has them)
+            if isinstance(policy.get(part), dict):
+                policy[part].pop("url", None)
         return super().identity() | {"policy": policy}
 
     async def run(self, ctx: TaskContext) -> Report:

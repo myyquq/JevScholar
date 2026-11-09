@@ -323,3 +323,69 @@ def test_steps_split_the_epoch():
 
     assert split(list(range(10)), 4) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
     assert split([1, 2], 4) == [[1], [2]] and split([], 4) == []
+
+
+# --------------------------------------------------------------------------- first-only groups
+def test_first_then_asks_d1_once_then_the_fixed_rule():
+    import asyncio
+
+    from jevscholar.controller.policy import make_policy
+    from jevscholar.controller.state import Candidate
+    from jevscholar.systems.controlled import Controlled
+
+    spec = groups.policy(SHA, {"kind": "fixed", "retrieval": ["explore"]})
+    assert spec == {
+        "kind": "first",
+        "first": {"kind": "d1", "sample": True, "adapter": SHA},
+        "then": {"kind": "fixed", "retrieval": ["explore"]},
+    }
+    assert groups.sampler(spec) == spec["first"] and groups.sampler(spec["first"]) == spec["first"]
+    p = make_policy({"kind": "first", "first": {"kind": "fixed"}, "then": spec["then"]})
+    offered = [Candidate("abstract"), Candidate("explore"), Candidate("finish")]
+    picks = [asyncio.run(p.choose(None, State("T", 0.27), offered)).index for _ in range(3)]
+    assert picks == [0, 1, 1]  # the first policy once, then the other
+    fresh = make_policy({"kind": "first", "first": {"kind": "fixed"}, "then": spec["then"]})
+    assert asyncio.run(fresh.choose(None, State("T", 0.27), offered)).index == 0  # per episode
+    identity = Controlled({"policy": spec | {"first": spec["first"] | {"url": "http://x"}}})
+    assert "url" not in identity.identity()["policy"]["first"]  # where d1 listens is no part
+
+
+def test_points_where_the_choice_matters(source, tmp_path):  # noqa: F811
+    labels = tmp_path / "points.jsonl"
+    rows = [
+        {"source": "src", "task": "t1", "batches": 0, "returns": [0.02, 0.0]},
+        {"source": "src", "task": "t1", "batches": 1, "returns": [0.01, 0.0105]},
+        {"source": "src", "task": "t2", "batches": 0, "returns": [0.0, 0.05]},
+        {"source": "other", "task": "t2", "batches": 1, "returns": [0.0, 0.05]},
+    ]
+    write_lines(labels, rows)
+    spread = groups.spreads(labels, "src")
+    assert spread == {("t1", 0): 0.02, ("t1", 1): pytest.approx(0.0005), ("t2", 0): 0.05}
+    found = groups.points(source, "ctl_fixed", 9, spread=spread, min_spread=0.01, per_task=None)
+    assert [(f.task, f.batches) for f in found] == [("t1", 0), ("t2", 0)]
+    one = groups.points(source, "ctl_fixed", 1, spread=spread, min_spread=0.01, per_task=None)
+    assert len(one) == 1
+    all_points = groups.points(source, "ctl_fixed", 9, per_task=None)
+    assert len(all_points) == 4  # no filter, no per-task limit: every fork
+    assert groups.points(source, "ctl_fixed", 9) == groups.points(source, "ctl_fixed", 9, 1)
+
+
+def test_first_only_groups_give_examples_of_d1s_decision_only(source, runs):  # noqa: F811
+    then = {"kind": "fixed", "batches": 3}
+    found = [Fork("t1", "t1", 0, ("abstract", "explore"))]
+    exps = groups.experiments(source, "ctl_fixed", found, adapter=SHA, run_usd=0.1, then=then)
+    spec = exps["groups-src-b0"].systems["g0"]
+    assert spec["policy"] == groups.policy(SHA, then) and "take" not in spec["start"]
+    # a member's log: d1's sampled decision, then the fixed rule's (no input, no probabilities)
+    fixed = decision(2, 1) | {"input": None, "probs": None}
+    assert groups.decision_example(fixed, 1.0, SHA, {}) is None
+    assert groups.decision_example(decision(1, 0), 1.0, SHA, {}) is not None
+    with pytest.raises(ValueError, match="without d1's input"):
+        groups.decision_example(decision(1, 0) | {"input": None}, 1.0, SHA, {})
+    manifest = runs[0] / "manifest.json"
+    data = json.loads(manifest.read_text())
+    for s in data["experiment"]["systems"].values():
+        s["policy"] = groups.policy(SHA, then)
+    manifest.write_text(json.dumps(data))
+    found = groups.outcomes(runs[:1])
+    assert {o["adapter"] for o in found} == {SHA}  # the sampler's adapter

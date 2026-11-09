@@ -6,8 +6,13 @@
 #   sbatch scripts/rl_round.sh                 # round 1, from the SFT adapter
 #   ROUND=2 sbatch scripts/rl_round.sh         # round 2, from round 1's adapter
 #   ROUND=2 NGROUPS=16 LR=2e-5 RUN_USD=0.4 sbatch scripts/rl_round.sh   # 64 trajectories
+#   NAME=first FIRST_ONLY=1 MIN_SPREAD=0.01 PER_TASK=0 NGROUPS=64 SIZE=8 LR=2e-5 \
+#     sbatch scripts/rl_round.sh               # d1 samples one decision at points that matter
 # Settings (environment): ROUND (1|2), NGROUPS (4), SIZE (4), RUN_USD (0.15 per group run),
-# LR (5e-5), STEPS (4 optimiser steps), SOURCE (rollouts-train), SFT (runs/controller/sft/adapter), PORT (9940).
+# LR (5e-5), STEPS (4 optimiser steps), SOURCE (rollouts-train), SFT (runs/controller/sft/adapter),
+# PORT (9940); NAME (a variant: its own runs and outputs), FIRST_ONLY (1: d1 samples the restored
+# point only, the fixed rule continues), MIN_SPREAD (only points whose branch returns span more),
+# PER_TASK (points per task at most, 0: no limit; default 1).
 #SBATCH --job-name=jev-rl
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
@@ -27,13 +32,21 @@ STEPS=${STEPS:-4}
 SOURCE=${SOURCE:-rollouts-train}
 SFT=${SFT:-runs/controller/sft/adapter}
 PORT=${PORT:-9940}
-OUT=runs/controller/rl/r$ROUND
-DATA=data/derived/controller/rl/r$ROUND.jsonl
-PREFIX=groups-$SOURCE-r$ROUND
+NAME=${NAME:-}
+FIRST_ONLY=${FIRST_ONLY:-0}
+MIN_SPREAD=${MIN_SPREAD:-}
+PER_TASK=${PER_TASK:-1}
+VARIANT=${NAME:+$NAME/}
+OUT=runs/controller/rl/${VARIANT}r$ROUND
+DATA=data/derived/controller/rl/${VARIANT}r$ROUND.jsonl
+PREFIX=groups-$SOURCE-${NAME:+$NAME-}r$ROUND
+EXTRA=(--per-task "$PER_TASK")
+[ "$FIRST_ONLY" = 1 ] && EXTRA+=(--first-only)
+[ -n "$MIN_SPREAD" ] && EXTRA+=(--min-spread "$MIN_SPREAD")
 
 case $ROUND in
   1) ADAPTER=$SFT ;;
-  2) ADAPTER=runs/controller/rl/r1/adapter ;;
+  2) ADAPTER=runs/controller/rl/${VARIANT}r1/adapter ;;
   *) echo "ROUND is 1 or 2 (at most two update rounds)" >&2; exit 2 ;;
 esac
 [ -f "$ADAPTER/adapter_model.safetensors" ] || { echo "no adapter at $ADAPTER" >&2; exit 2; }
@@ -58,7 +71,7 @@ curl -sf "http://127.0.0.1:$PORT/info"; echo
 
 # 2. Sample the groups (main environment; DeepSeek via the gateway).
 uv run jev controller groups "$SOURCE" --adapter "$ADAPTER" --round "$ROUND" \
-  --groups "$NGROUPS" --size "$SIZE" --run-usd "$RUN_USD" --prefix "$PREFIX"
+  --groups "$NGROUPS" --size "$SIZE" --run-usd "$RUN_USD" --prefix "$PREFIX" "${EXTRA[@]}"
 
 # 3. Stop the server: the update needs the GPU.
 stop_server

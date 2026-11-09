@@ -33,6 +33,7 @@ from jevscholar.controller.state import Candidate, State
 from jevscholar.util import read_json
 
 TIE = 1e-9  # returns this close to the best count as best
+SIGNAL = 0.01  # a point whose options' returns span more than this: the choice matters
 
 
 # --------------------------------------------------------------------------- decisions
@@ -40,9 +41,13 @@ def decision_scores(
     probs: Sequence[Sequence[float]],
     points: Sequence[dict[str, Any]],
     profile: Profile | None = None,
+    min_spread: float = SIGNAL,
 ) -> dict[str, Any]:
     """Regret and agreement of option distributions (in each point's option order) against the
-    points' branch returns."""
+    points' branch returns: over all points, and (`signal`) over those whose options' returns
+    span more than `min_spread`, where the choice changes the outcome. `expected_return` is the
+    distribution's expected branch return less the points' mean option return (0 for a uniform
+    choice), so adapters compare on the same points without the tasks' own scale."""
     profile = profile or Profile()
     if len(probs) != len(points):
         raise ValueError(f"{len(probs)} distributions for {len(points)} points")
@@ -54,10 +59,13 @@ def decision_scores(
         best = max(returns)
         chosen = profile.pick([Candidate(k) for k in kinds], dist)
         target = [point["target"].get(name, 0.0) for name in point.get("names", [])] or None
+        expected = sum(p * r for p, r in zip(dist, returns, strict=True))
         rows.append(
             {
+                "spread": best - min(returns),
                 "regret": best - returns[chosen],
-                "expected_regret": best - sum(p * r for p, r in zip(dist, returns, strict=True)),
+                "expected_regret": best - expected,
+                "expected_return": expected - statistics.fmean(returns),
                 "best": returns[chosen] >= best - TIE,
                 "finish": kinds[chosen] == "finish",
                 "ce": None
@@ -65,16 +73,22 @@ def decision_scores(
                 else -sum(t * math.log(max(p, 1e-12)) for t, p in zip(target, dist, strict=True)),
             }
         )
+    signal = [r for r in rows if r["spread"] > min_spread]
+    return summary(rows) | {"min_spread": min_spread, "signal": summary(signal) if signal else None}
+
+
+def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(rows)
     ces = [r["ce"] for r in rows if r["ce"] is not None]
-    return {
-        "points": n,
-        "regret": sum(r["regret"] for r in rows) / n,
-        "expected_regret": sum(r["expected_regret"] for r in rows) / n,
+    out: dict[str, Any] = {"points": n}
+    for key in ("regret", "expected_regret", "expected_return"):
+        out[key] = sum(r[key] for r in rows) / n
+    out |= {
         "best_rate": sum(r["best"] for r in rows) / n,
         "finish_rate": sum(r["finish"] for r in rows) / n,
         "ce": sum(ces) / len(ces) if ces else None,
     }
+    return out
 
 
 def with_names(points: Iterable[dict[str, Any]], examples: Iterable[Any]) -> list[dict[str, Any]]:

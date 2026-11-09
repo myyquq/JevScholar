@@ -8,6 +8,8 @@
   asks: the profile's choice, or a sample (seeded per task and decision) for RL rollouts. Each
   call is admitted and charged to the task as the `d1_choice` tool, per started thousand prompt
   tokens, so the cap covers the controller too.
+- `FirstThen`: one policy for the episode's first asked decision, another for the rest (RL
+  groups that sample one decision of d1 and continue with the fixed rule, as branches do).
 
 Every policy returns a Decision: the index of the chosen candidate and, where the policy has
 them, its probabilities over the candidates and the exact input they came from (d1's request and
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol
 
 import requests
-from pydantic import Field, TypeAdapter
+from pydantic import Field, PrivateAttr, TypeAdapter
 
 from jevscholar.controller.d1 import user_turn
 from jevscholar.controller.prompt import LEVELS, Profile
@@ -142,8 +144,24 @@ class D1Policy(Strict):
         return rng.choices(range(len(dist)), weights=dist)[0]
 
 
-PolicySpec = Annotated[Fixed | Prompted | D1Policy, Field(discriminator="kind")]
-_POLICY: TypeAdapter[Fixed | Prompted | D1Policy] = TypeAdapter(PolicySpec)
+class FirstThen(Strict):
+    """`first` decides the first decision it is asked (a restored point's, in an RL group), `then`
+    every later one. A fresh policy is made per episode (`make_policy`), so "first" is per
+    episode."""
+
+    kind: Literal["first"] = "first"
+    first: Annotated[Fixed | Prompted | D1Policy, Field(discriminator="kind")]
+    then: Annotated[Fixed | Prompted | D1Policy, Field(discriminator="kind")]
+    _asked: bool = PrivateAttr(default=False)
+
+    async def choose(self, ctx: TaskContext, state: State, candidates: list[Candidate]) -> Decision:
+        policy = self.then if self._asked else self.first
+        self._asked = True
+        return await policy.choose(ctx, state, candidates)
+
+
+PolicySpec = Annotated[Fixed | Prompted | D1Policy | FirstThen, Field(discriminator="kind")]
+_POLICY: TypeAdapter[Fixed | Prompted | D1Policy | FirstThen] = TypeAdapter(PolicySpec)
 
 
 def make_policy(spec: dict[str, Any]) -> Policy:
