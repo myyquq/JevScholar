@@ -6,7 +6,7 @@
 #   3. the comparison table against the fixed rule's own val run.
 # Usage (from the repository):
 #   sbatch scripts/val_compare.sh
-#   ADAPTERS="d1_sft=runs/controller/sft/adapter d1_rl1=runs/controller/rl/r1/adapter" sbatch ...
+#   ADAPTERS="name=dir ..." sbatch scripts/val_compare.sh   (default: d1-sft, and d1-rl as d1_first1)
 # Settings (environment): ADAPTERS (name=dir ...; missing dirs are skipped), SOURCE
 # (rollouts-val), DATA (data/derived/controller/sft/dev.jsonl), RUN_USD (0.6 per run),
 # EPISODES (1; 0 = decisions only, no executor calls), PORT (9940).
@@ -20,7 +20,7 @@
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 
-ADAPTERS=${ADAPTERS:-"d1_sft=runs/controller/sft/adapter d1_rl1=runs/controller/rl/r1/adapter d1_rl2=runs/controller/rl/r2/adapter d1_first1=runs/controller/rl/first/r1/adapter d1_first2=runs/controller/rl/first/r2/adapter"}
+ADAPTERS=${ADAPTERS:-"d1_sft=runs/controller/sft/adapter d1_first1=runs/controller/rl/first/r1/adapter"}
 SOURCE=${SOURCE:-rollouts-val}
 DATA=${DATA:-data/derived/controller/sft/dev.jsonl}
 RUN_USD=${RUN_USD:-0.6}

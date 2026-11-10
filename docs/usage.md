@@ -59,14 +59,14 @@ uv run jev controller trajectories RUN ... [--out FILE]   # labelled decisions o
 uv run jev controller branches RUN [--system ctl_fixed] [--tasks N] [--per-task N] [--run-usd X] [--dry-run]
                                        # branch every legal candidate of a train/val run's points
 uv run jev controller labels RUN ... --out FILE           # soft SFT targets from branch runs
-uv run jev controller groups RUN --adapter DIR [--groups 4] [--size 4] [--round 1|2] [--run-usd X]
-    [--first-only] [--min-spread 0.01] [--per-task N] [--dry-run]
-                                       # RL groups: sample trajectories from a train run's points
+uv run jev controller groups RUN --adapter DIR --first-only --min-spread 0.01 --per-task 0
+    [--groups 64] [--size 8] [--run-usd X] [--dry-run]
+                                       # RL groups at points where the choice matters
                                        # (needs `controller serve --adapter DIR` running)
 uv run jev controller rl-data RUN ... --out FILE          # returns, advantages, RL examples
 scripts/train_env.sh jev controller rl-update DATA.jsonl --adapter DIR --reference SFT_DIR --out DIR
                                        # one bounded RL update; reverted above 0.05 nats KL
-ROUND=1 sbatch scripts/rl_round.sh     # one RL round as a GPU job: serve, groups, rl-data, update
+sbatch scripts/rl_round.sh             # d1-rl as a GPU job: serve, groups, rl-data, update
 scripts/train_env.sh jev controller regret DEV.jsonl --adapter DIR ... [--base]
                                        # val decision regret against branch returns (no executor)
 uv run jev controller episodes RUN --name NAME [--adapter DIR] [--run-usd X] [--dry-run]
@@ -218,9 +218,7 @@ older format that `jev controller trajectories` does not read.
 | `eval-dev`, `eval-dev2` | the controller comparisons on June dev and Nov dev2 (docs/05) |
 | `controller/sanity`, `controller/sweep-1` | the LoRA training-loop check and the offline prompt search |
 | `branches-<RUN>-b<batches>-<kind>` | counterfactual branches of a train or val run's decision points (docs/06) |
-| `controller/sft` | the SFT warm start (2 epochs; the adapter RL starts from) |
-| `groups-<RUN>-r<round>-b<batches>` | RL groups: g0..g3 sampled from a train run's decision points (docs/06) |
-| `controller/rl/r<round>` | a bounded RL update: `adapter/` (absent if reverted), `metrics.json` |
-| `groups-<RUN>-first-r<round>-b<batches>`, `controller/rl/first/r<round>` | the first-only RL variant at points that matter (docs/06) |
-| `compare-<RUN>-<name>` | val episodes with one adapter choosing (docs/06: comparing on val) |
-| `controller/rl/first/r1` | the first-only RL adapter (lr 1e-5): the best val retrieval return so far (docs/06) |
+| `controller/sft` | d1-sft: the SFT warm start (docs/06) |
+| `groups-rollouts-train-first-r1-b<batches>` | the RL groups (docs/06: bounded RL) |
+| `controller/rl/first/r1` | d1-rl: the RL update of d1-sft (`adapter/`, `metrics.json`) |
+| `compare-rollouts-val-<name>` | val episodes with one adapter choosing (docs/06; d1-rl is `d1_first1`) |

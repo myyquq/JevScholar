@@ -2,17 +2,14 @@
 # One bounded RL round of d1 (docs/06) as a single GPU job:
 #   serve the round's adapter (.venv-train) -> sample the groups -> stop the server ->
 #   build the RL data -> one RL update (KL to the SFT adapter; reverted above 0.05 nats).
+# Its defaults are d1-rl's recipe (docs/06, bounded RL): d1 samples the restored point only, at
+# the train points whose options' branch returns differ by more than 0.01, 8 per group, lr 1e-5.
 # Usage (from the repository):
-#   sbatch scripts/rl_round.sh                 # round 1, from the SFT adapter
-#   ROUND=2 sbatch scripts/rl_round.sh         # round 2, from round 1's adapter
-#   ROUND=2 NGROUPS=16 LR=2e-5 RUN_USD=0.4 sbatch scripts/rl_round.sh   # 64 trajectories
-#   NAME=first FIRST_ONLY=1 MIN_SPREAD=0.01 PER_TASK=0 NGROUPS=64 SIZE=8 LR=2e-5 \
-#     sbatch scripts/rl_round.sh               # d1 samples one decision at points that matter
-# Settings (environment): ROUND (1|2), NGROUPS (4), SIZE (4), RUN_USD (0.15 per group run),
-# LR (5e-5), STEPS (4 optimiser steps), SOURCE (rollouts-train), SFT (runs/controller/sft/adapter),
-# PORT (9940); NAME (a variant: its own runs and outputs), FIRST_ONLY (1: d1 samples the restored
-# point only, the fixed rule continues), MIN_SPREAD (only points whose branch returns span more),
-# PER_TASK (points per task at most, 0: no limit; default 1).
+#   sbatch scripts/rl_round.sh
+# Settings (environment): ROUND (1|2), NGROUPS (64), SIZE (8), RUN_USD (0.3 per group run),
+# LR (1e-5), STEPS (4), SOURCE (rollouts-train), SFT (runs/controller/sft/adapter), PORT (9940),
+# NAME (first: runs/controller/rl/<NAME>/r<ROUND>), FIRST_ONLY (1), MIN_SPREAD (0.01),
+# PER_TASK (0: no limit).
 #SBATCH --job-name=jev-rl
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
@@ -24,18 +21,18 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 
 ROUND=${ROUND:-1}
-NGROUPS=${NGROUPS:-4}
-SIZE=${SIZE:-4}
-RUN_USD=${RUN_USD:-0.15}
-LR=${LR:-5e-5}
+NGROUPS=${NGROUPS:-64}
+SIZE=${SIZE:-8}
+RUN_USD=${RUN_USD:-0.3}
+LR=${LR:-1e-5}
 STEPS=${STEPS:-4}
 SOURCE=${SOURCE:-rollouts-train}
 SFT=${SFT:-runs/controller/sft/adapter}
 PORT=${PORT:-9940}
-NAME=${NAME:-}
-FIRST_ONLY=${FIRST_ONLY:-0}
-MIN_SPREAD=${MIN_SPREAD:-}
-PER_TASK=${PER_TASK:-1}
+NAME=${NAME-first}
+FIRST_ONLY=${FIRST_ONLY:-1}
+MIN_SPREAD=${MIN_SPREAD-0.01}
+PER_TASK=${PER_TASK:-0}
 VARIANT=${NAME:+$NAME/}
 OUT=runs/controller/rl/${VARIANT}r$ROUND
 DATA=data/derived/controller/rl/${VARIANT}r$ROUND.jsonl

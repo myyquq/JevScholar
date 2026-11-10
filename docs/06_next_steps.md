@@ -65,130 +65,64 @@ on-policy RL samples; gold data enters only rewards and labels, never the state 
    the examples (what d1 reads at the point, under its default profile) and, beside them,
    `FILE.points.jsonl` with each point's options and returns; a point with a missing branch is
    left out and counted.
-3. **Scale.** About 60 labelled decisions from train tasks; validation on the 9 val tasks by
-   regret against the best branch, soft-target loss and calibration.
-4. **Recipe.** `sft` in `configs/training.yaml` reads `data/derived/controller/sft/train.jsonl`
-   (train branches) and `dev.jsonl` (val branches); then `jev controller train sft`. Its
-   hyperparameters are the sanity check's, not yet tuned. The val labels need a fixed-rule run on
-   val in the current decision format (`ctl-val` predates it).
+3. **Data.** 135 labelled decisions from the 34 train tasks (`runs/rollouts-train`, fixed rule;
+   438 branches) and 36 from the 9 val tasks (`runs/rollouts-val`; 117 branches), in
+   `data/derived/controller/sft/train.jsonl` and `dev.jsonl`.
+4. **Recipe and result.** `sft` in `configs/training.yaml` (`jev controller train sft`): LoRA
+   r 16, lr 2e-4, 2 epochs, the sanity check's settings. Val: soft-target CE 0.980 → 0.954,
+   accuracy 58% → 58%, ECE 0.122 → 0.095, a small gain; 4 epochs overfit (val CE 1.15). The
+   adapter is `runs/controller/sft/adapter` (d1-sft).
 
 ### Bounded RL (adapted from GRPO)
 
-One round:
-1. Restore one train decision point; sample 4 trajectories from the served adapter at
-   temperature 1 (`policy: {kind: d1, sample: true}`; each decision's sampling is seeded by the
-   task and the decision).
-2. Log the exact inputs, option order, legal masks, actions, old probabilities and the adapter's
-   hash (all in each `decisions.jsonl` record).
-3. Reward: r_retrieval for retrieval-only trajectories, U for ones that write a report.
-4. Advantage A = (R − group mean) / max(group SD, 0.02); skip near-tied groups.
-5. Update: recompute the same option distribution; clip the chosen option's probability ratio to
-   [0.8, 1.2]; add the exact categorical KL to the SFT reference with β = 0.05; one epoch per
-   batch, at most two update rounds. Forced and overridden decisions stay out of the loss.
-6. Stop and revert if the mean KL exceeds 0.05 nats per decision (target about 0.02).
-7. Reload the adapter (`init_adapter` in a recipe); check its hash, readout parity, legal masks
-   and option mapping.
+**Design.** RL samples only where a choice changes the outcome, and only that choice:
+1. **Points.** Train decision points (`rollouts-train`) whose options' branch returns differ by
+   more than 0.01: 46 of the 135. At the others every option ends within about one batch's cost
+   (0.002) of the rest, since a batch of 10 rarely holds an important citation; they carry no
+   signal.
+2. **Groups.** Each point is restored and sampled by 8 members (g0..g7): d1 with the SFT adapter
+   chooses the point's option at temperature 1, and the fixed rule continues, as the branches
+   do (`policy: {kind: first, first: {kind: d1, sample: true, adapter: <sha256>}, then:
+   <fixed>}`). A member's return then differs only by that one choice, and its continuation
+   replays its branch's executor calls. Sampling is seeded by the run, system, task and
+   decision. These are new on-policy samples; the branches themselves never become RL data.
+3. **Reward and advantage.** The retrieval return at the end (as for SFT labels);
+   A = (R − group mean) / max(group SD, 0.02); groups whose returns span less than 0.001 are
+   skipped.
+4. **Update.** One epoch in 4 optimiser steps, dropout off: −min(r·A, clip(r, 0.8, 1.2)·A) +
+   0.05·KL(π‖π_ref), with the exact categorical KL to the frozen SFT adapter. π_old is
+   recomputed with the training readout before the first step (the served one-row readout
+   differs from it by up to 0.03). Reverted, nothing saved, if the mean KL exceeds 0.05 nats
+   per decision. lr 1e-5; one round.
 
-Scale: a pilot of 16 trajectories (4 groups), then up to 64 if KL, rewards and action diversity
-are stable, then up to 128 with retrieval-only trajectories. The pilot runs even if SFT shows no
-gain; a null or negative result is recorded and SFT stays a candidate.
+Sampling every decision at points picked without regard to their spread was tried first: it
+moved d1's probabilities but not its episodes on val.
 
-**How it runs** (`controller/groups.py`, `rl_update` in `controller/d1.py`,
-`scripts/rl_round.sh`; one GPU job per round):
+**Run.** `sbatch scripts/rl_round.sh` (its defaults are this design): serve the SFT adapter,
+`jev controller groups rollouts-train --first-only --min-spread 0.01 --per-task 0 --groups 64
+--size 8`, `jev controller rl-data`, `jev controller rl-update`. Code: `controller/groups.py`,
+`rl_update` in `controller/d1.py`, `FirstThen` in `controller/policy.py`.
 
-1. `jev controller groups RUN --adapter DIR --round R` picks `--groups` decision points of a
-   train run (`branches.forks`: choices the rules left open, in finished episodes of tasks with
-   important citations; at most one per task, a fixed pick per round) and makes one run per
-   `start.batches` value, `runs/groups-<RUN>-r<R>-b<batches>`, whose `ids` are the tasks picked
-   at that value. Its members g0..g3 restore the point and sample with
-   `policy: {kind: d1, sample: true, adapter: <sha256>}`; sampling is seeded by
-   `ctx.tag('control')`, which holds the system's name, so each member samples on its own. The
-   served adapter must be the named one (the policy checks `/info`).
-2. `jev controller rl-data RUN... --out FILE` scores each member with the retrieval return (as
-   the branch labels are: important citations among the writer's documents, less the task's
-   whole list spend), and gives A = (R − mean) / max(SD, 0.02) per group (population SD). A group
-   with a missing or failed member, or whose returns span less than 0.001, is skipped. Every
-   decision the policy made becomes an example: exactly what d1 read
-   (`input.requests[0]`, `input.render`), the requested option and its logged probability.
-   Forced, overridden and taken decisions stay out.
-3. `jev controller rl-update DATA --adapter DIR --reference SFT --out DIR` computes the
-   reference probabilities with the frozen SFT adapter, then one epoch over the decisions in 4
-   optimiser steps whatever their number, dropout off: loss −min(r·A, clip(r, 0.8, 1.2)·A) +
-   0.05·KL(π‖π_ref), the exact categorical KL over the options. π_old is recomputed with the
-   training readout (the same batches) before the first step: the served one-row readout
-   differs from it by up to 0.03, which would otherwise count as policy change. It saves `adapter/` and `metrics.json` (mean KL, mean ratio, clip fraction, readout
-   parity against the logged probabilities); above 0.05 nats mean KL it reverts and saves no
-   adapter.
-4. Round 2 (`ROUND=2`) samples new points with round 1's adapter and updates it, the reference
-   still the SFT adapter. There are at most two rounds.
+**Result** (`runs/controller/rl/first/r1/adapter`, d1-rl): 368 trajectories, 45 groups and 360
+decisions used, $0 billed (all replayed). Median within-group spread 0.018, mean |A| 0.40. Mean
+KL to SFT 0.039, clip fraction 0.64.
 
-**Round 1** (`groups-rollouts-train-r1-*`, `controller/rl/r1`; 4 groups × 4, lr 5e-5, logged
-π_old): all 16 trajectories finished, 37 decisions, about $0.14 list. Mean KL to SFT 0.030 (one
-decision 0.058), mean ratio 0.98, clip fraction 0.32, readout parity 0.030. The rewards barely
-separate within a group (returns within 0.005–0.009, below the 0.02 SD floor; |A| ≤ 0.34), so
-the update moved d1 mostly by the learning rate, not by a clear signal. Round 2 is run larger
-(16 groups) at lr 2e-5.
+**On val** (`scripts/val_compare.sh`; judge-free, val never becomes RL data): every val task run
+from the start with each adapter choosing, scored by the retrieval return and paired per task
+with the fixed rule's own val run; and on the 36 branched val points, each adapter's regret
+against the best branch.
 
-**Pilot result on val** (`val-compare`, 9 tasks, retrieval return paired with the fixed rule's
-0.0102): d1-sft 0.0084, d1-rl r1 0.0090, d1-rl r2 0.0081 (each ± 0.0025, not resolved). The
-three d1 versions ran identical episodes on 7 of 9 tasks and found the same important
-citations (recall 0.141 against the fixed rule's 0.121); they differ only in when they stop.
-Decision regret on the 36 branched val points: 0.0038, 0.0039, 0.0037. RL moved the
-probabilities (KL 0.03) but rarely d1's choice: a null result at this scale.
+| System (9 val tasks) | Return | Δ vs fixed (± SE) | Recall | Cost | Batches |
+|---|---|---|---|---|---|
+| fixed rule | .0102 | — | .121 | $.022 | 3.0 |
+| d1-sft | .0084 | −.0018 ± .0026 | .141 | $.035 | 3.6 |
+| **d1-rl** | **.0129** | +.0027 ± .0077 | **.220** | $.054 | 5.2 |
 
-**Why, and the next try.** Most choices change nothing: a batch of 10 rarely holds an important
-citation, so most options' returns differ only by a batch's cost (about 0.002). Of the 135
-branched train points, 46 have option returns more than 0.01 apart (19 more than 0.02); of the
-36 val points, 14. The pilot sampled points without regard to this, and let d1 sample every
-later decision too, which diluted the one choice that mattered. The next try
-(`--first-only --min-spread 0.01 --per-task 0`, `NAME=first`): groups only at points whose
-branch returns differ, d1 sampling the restored point only and the fixed rule continuing, as
-the branches do (`policy: {kind: first, first: <d1>, then: <fixed>}`). Each member's return then
-differs only by that choice, and its continuation replays the branch's executor calls. These
-are new on-policy samples, not the branches themselves (data rules above). On val, `regret`
-also reports the `signal` points (option returns more than 0.01 apart) and each distribution's
-expected return against a uniform choice.
-
-**First-only round 1** (`groups-rollouts-train-first-r1-*`, `controller/rl/first/r1`; 46 points
-× 8, from the SFT adapter): 368 trajectories, all replayed from the branches' cache ($0 billed).
-45 groups used (1 tied), 360 decisions; the median within-group spread was 0.018 (40 of 45 above
-0.01), mean |A| 0.40, and every group chose more than one option. At lr 2e-5 the update moved
-too far (mean KL 0.082) and was reverted; at lr 1e-5 it was kept: mean KL 0.039 (one decision
-0.090), clip fraction 0.64. A second round from it would likely pass the KL bound, so there is
-none.
-
-**Val, all adapters** (`val-compare-32722114`; 9 tasks, retrieval return paired with the fixed
-rule):
-
-| System | Return | Δ vs fixed (± SE) | W/T/L | Recall | Cost | Batches |
-|---|---|---|---|---|---|---|
-| fixed rule (`rollouts-val`) | .0102 | — | — | .121 | $.022 | 3.0 |
-| d1-sft | .0084 | −.0018 ± .0026 | 5/0/4 | .141 | $.035 | 3.6 |
-| d1-rl r1 | .0090 | −.0011 ± .0025 | 6/0/3 | .141 | $.033 | 3.2 |
-| d1-rl r2 | .0081 | −.0020 ± .0025 | 5/0/4 | .141 | $.035 | 3.7 |
-| **d1-rl first-only** | **.0129** | +.0027 ± .0077 | 4/0/5 | **.220** | $.054 | 5.2 |
-
-On the 14 val points whose option returns differ by more than 0.01, the first-only adapter's
-expected return over a uniform choice is +.0014 (d1-sft +.0006) and its regret .0068 (d1-sft
-.0074); it finishes at 8% of all 36 points (d1-sft 28%). It is the first RL version that changes
-d1's episodes: it searches longer on 4 of the 9 tasks, finds more important citations on 3 of
-them (one from 0 to 0.5 recall), and on the fourth spends 2 more batches for nothing. Its
-recall gain is the completeness gap docs/05 names, at about 1.5 times d1-sft's cost (about 30%
-of DS-base's). With 9 tasks none of this is resolved; which d1 carries the main claim is chosen
-on June dev (below), with d1-sft and the first-only adapter as the candidates.
-
-**Comparing on val** (`controller/compare.py`, `scripts/val_compare.sh`; judge-free, val tasks
-never become RL data):
-- *Decisions.* On the 36 branched val points (`dev.jsonl`), each adapter's served choice
-  (`finish` at P ≥ 0.5, else the most probable) against the best branch: regret, expected
-  regret of its distribution, best-option rate, soft-target CE. Only d1 runs; no executor call.
-- *Episodes.* Every val task from the start with each adapter choosing
-  (`runs/compare-rollouts-val-<name>`), scored by the retrieval return and paired per task
-  against the fixed rule's own val run (`rollouts-val`): mean difference ± SE, tasks won, tied
-  and lost. Report-level U (judged) is a later, costlier check.
-
-**Still to build.** Nothing for the pilot. Its learning rate (5e-5) is not tuned. U as the
-reward for trajectories that write a report is not used: the pilot rewards retrieval only.
+d1-rl searches longer than d1-sft (it finishes at 8% of the val points, d1-sft at 28%) and finds
+more important citations on 3 of the 4 tasks where its episodes differ; at the 14 val points
+whose options' returns differ, its regret is .0068 (d1-sft .0074). This is the completeness gap
+docs/05 names, at about 1.5 times d1-sft's cost (about 30% of DS-base's). With 9 tasks it is not
+resolved: the choice between d1-sft and d1-rl is made on June dev (below).
 
 ## The final test
 
