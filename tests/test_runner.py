@@ -363,6 +363,28 @@ def test_every_shipped_experiment_resolves_and_builds():
                 runner.make_system(use, json.dumps(params))
 
 
+def test_the_june_dev_comparison_serves_each_d1_on_its_own_port():
+    from jevscholar.paths import EXPERIMENTS
+
+    exp = load_experiment(EXPERIMENTS / "evaluate.yaml", "dev-trained")
+    cell = exp.benchmarks["deepscholar"]
+    assert (cell.split, cell.limit) == ("dev", 20)
+    assert set(cell.systems) == {
+        f"{s}{x}" for s in ("ctl_fixed", "ctl_d1", "ctl_d1_sft", "ctl_d1_rl") for x in ("", "_s1")
+    }
+    ports = {}
+    for system in ("ctl_d1", "ctl_d1_sft", "ctl_d1_rl", "ctl_d1_rl_s1"):
+        policy = exp.system_spec(system)[1]["policy"]
+        assert policy["kind"] == "d1" and len(policy.get("adapter") or "a" * 64) == 64
+        ports[system] = policy.get("url", "http://127.0.0.1:9940")[-4:]
+    assert ports == {
+        "ctl_d1": "9940",
+        "ctl_d1_sft": "9941",
+        "ctl_d1_rl": "9942",
+        "ctl_d1_rl_s1": "9942",
+    }
+
+
 def test_a_bad_system_parameter_fails_before_any_task_runs(kw, tmp_path, monkeypatch):
     from pydantic import ValidationError
 

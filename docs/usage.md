@@ -73,6 +73,7 @@ uv run jev controller episodes RUN --name NAME [--adapter DIR] [--run-usd X] [--
                                        # every task of a val run from the start, d1 choosing
 uv run jev controller compare RUN:SYSTEM ...              # paired retrieval returns, first = baseline
 sbatch scripts/val_compare.sh          # d1-sft vs d1-rl on val: regret, episodes, comparison
+sbatch scripts/june_dev.sh             # fixed, d1, d1-sft, d1-rl on June dev: run, eval, report
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
@@ -216,6 +217,7 @@ older format that `jev controller trajectories` does not read.
 | `p-dev`, `p-dev2` | earlier controller comparisons, with planning and DS-base under the $0.27 cap |
 | `ctl-val` | the controllers on val; the fixed rule's batch count (docs/05) |
 | `eval-dev`, `eval-dev2` | the controller comparisons on June dev and Nov dev2 (docs/05) |
+| `eval-dev-trained` | the fixed rule, d1, d1-sft and d1-rl on June dev: the choice of d1 (docs/06) |
 | `controller/sanity`, `controller/sweep-1` | the LoRA training-loop check and the offline prompt search |
 | `branches-<RUN>-b<batches>-<kind>` | counterfactual branches of a train or val run's decision points (docs/06) |
 | `controller/sft` | d1-sft: the SFT warm start (docs/06) |

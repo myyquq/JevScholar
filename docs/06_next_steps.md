@@ -132,7 +132,10 @@ diagnostic. d1-sft and d1-rl are added to `evaluate.yaml` once their adapters ar
 by its hash (`policy: {kind: d1, url: ..., adapter: <sha256 of adapter_model.safetensors>}`).
 
 **Which d1 carries the main claim** is chosen on June dev before the test: d1, d1-sft or d1-rl.
-d1-sft and d1-rl stay in the test matrix; d1 joins it if chosen.
+d1-sft and d1-rl stay in the test matrix; d1 joins it if chosen. The comparison is `sbatch scripts/june_dev.sh`
+(`jev run evaluate --variant dev-trained`, run `eval-dev-trained`): the fixed rule, d1, d1-sft
+and d1-rl rerun together on the 20 June dev tasks, two writer samples each, so every pair is
+measured with the same code; DS-base keeps its `eval-dev` numbers.
 
 **Cost before test.** An action-level forecast from the dev runs' bills, then a funded matrix
 frozen before generation, run in matched task chunks across arms. Six arms with two samples on

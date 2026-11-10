@@ -8,8 +8,26 @@ benchmarks:
     samples: 2
     systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_d1, ctl_prompted]
 
+systems:  # the trained d1 (docs/06), each adapter on its own server, named by its sha256
+  ctl_d1_sft:  # d1-sft: runs/controller/sft/adapter
+    extends: ctl_d1
+    policy:
+      url: http://127.0.0.1:9941
+      adapter: dabf7875e4091468400e50fa90a67c54d2dbce7969ac73d97df05280d03c45b6
+  ctl_d1_rl:  # d1-rl: runs/controller/rl/first/r1/adapter
+    extends: ctl_d1
+    policy:
+      url: http://127.0.0.1:9942
+      adapter: 2fa87a6904389d5d0503cd46f5aaf0fe91107a7231ce753e4c30fa5256f79807
+
 variants:
   dev: {benchmarks: {deepscholar: {split: dev, limit: 20}}}     # June dev
+  dev-trained:  # June dev: choose the d1 of the main claim (docs/06); scripts/june_dev.sh
+    benchmarks:
+      deepscholar:
+        split: dev
+        limit: 20
+        systems: [ctl_fixed, ctl_d1, ctl_d1_sft, ctl_d1_rl]
   dev2: {benchmarks: {deepscholar: {split: dev2, limit: 20}}}   # Nov dev2
   test:  # the held-out tasks; the trained controllers join once frozen
     budget: {run_usd: 15.0, judge_run_usd: 5.0}
