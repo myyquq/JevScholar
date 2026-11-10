@@ -65,38 +65,64 @@ on-policy RL samples; gold data enters only rewards and labels, never the state 
    the examples (what d1 reads at the point, under its default profile) and, beside them,
    `FILE.points.jsonl` with each point's options and returns; a point with a missing branch is
    left out and counted.
-3. **Scale.** About 60 labelled decisions from train tasks; validation on the 9 val tasks by
-   regret against the best branch, soft-target loss and calibration.
-4. **Recipe.** `sft` in `configs/training.yaml` reads `data/derived/controller/sft/train.jsonl`
-   (train branches) and `dev.jsonl` (val branches); then `jev controller train sft`. Its
-   hyperparameters are the sanity check's, not yet tuned. The val labels need a fixed-rule run on
-   val in the current decision format (`ctl-val` predates it).
+3. **Data.** 135 labelled decisions from the 34 train tasks (`runs/rollouts-train`, fixed rule;
+   438 branches) and 36 from the 9 val tasks (`runs/rollouts-val`; 117 branches), in
+   `data/derived/controller/sft/train.jsonl` and `dev.jsonl`.
+4. **Recipe and result.** `sft` in `configs/training.yaml` (`jev controller train sft`): LoRA
+   r 16, lr 2e-4, 2 epochs, the sanity check's settings. Val: soft-target CE 0.980 → 0.954,
+   accuracy 58% → 58%, ECE 0.122 → 0.095, a small gain; 4 epochs overfit (val CE 1.15). The
+   adapter is `runs/controller/sft/adapter` (d1-sft).
 
 ### Bounded RL (adapted from GRPO)
 
-One round:
-1. Restore one train decision point; sample 4 trajectories from the served adapter at
-   temperature 1 (`policy: {kind: d1, sample: true}`; each decision's sampling is seeded by the
-   task and the decision).
-2. Log the exact inputs, option order, legal masks, actions, old probabilities and the adapter's
-   hash (all in each `decisions.jsonl` record).
-3. Reward: r_retrieval for retrieval-only trajectories, U for ones that write a report.
-4. Advantage A = (R − group mean) / max(group SD, 0.02); skip near-tied groups.
-5. Update: recompute the same option distribution; clip the chosen option's probability ratio to
-   [0.8, 1.2]; add the exact categorical KL to the SFT reference with β = 0.05; one epoch per
-   batch, at most two update rounds. Forced and overridden decisions stay out of the loss.
-6. Stop and revert if the mean KL exceeds 0.05 nats per decision (target about 0.02).
-7. Reload the adapter (`init_adapter` in a recipe); check its hash, readout parity, legal masks
-   and option mapping.
+**Design.** RL samples only where a choice changes the outcome, and only that choice:
+1. **Points.** Train decision points (`rollouts-train`) whose options' branch returns differ by
+   more than 0.01: 46 of the 135. At the others every option ends within about one batch's cost
+   (0.002) of the rest, since a batch of 10 rarely holds an important citation; they carry no
+   signal.
+2. **Groups.** Each point is restored and sampled by 8 members (g0..g7): d1 with the SFT adapter
+   chooses the point's option at temperature 1, and the fixed rule continues, as the branches
+   do (`policy: {kind: first, first: {kind: d1, sample: true, adapter: <sha256>}, then:
+   <fixed>}`). A member's return then differs only by that one choice, and its continuation
+   replays its branch's executor calls. Sampling is seeded by the run, system, task and
+   decision. These are new on-policy samples; the branches themselves never become RL data.
+3. **Reward and advantage.** The retrieval return at the end (as for SFT labels);
+   A = (R − group mean) / max(group SD, 0.02); groups whose returns span less than 0.001 are
+   skipped.
+4. **Update.** One epoch in 4 optimiser steps, dropout off: −min(r·A, clip(r, 0.8, 1.2)·A) +
+   0.05·KL(π‖π_ref), with the exact categorical KL to the frozen SFT adapter. π_old is
+   recomputed with the training readout before the first step (the served one-row readout
+   differs from it by up to 0.03). Reverted, nothing saved, if the mean KL exceeds 0.05 nats
+   per decision. lr 1e-5; one round.
 
-Scale: a pilot of 16 trajectories (4 groups), then up to 64 if KL, rewards and action diversity
-are stable, then up to 128 with retrieval-only trajectories. The pilot runs even if SFT shows no
-gain; a null or negative result is recorded and SFT stays a candidate.
+Sampling every decision at points picked without regard to their spread was tried first: it
+moved d1's probabilities but not its episodes on val.
 
-**Still to build.** The RL update (ratio, clip, KL) in `controller/d1.py` and an adapter reload
-in `jev controller serve`. The decision records, restorable points, the branch runner and the
-soft-label builder (`controller/branches.py`), sampling mode, differentiable option readout and
-soft-target training exist.
+**Run.** `sbatch scripts/rl_round.sh` (its defaults are this design): serve the SFT adapter,
+`jev controller groups rollouts-train --first-only --min-spread 0.01 --per-task 0 --groups 64
+--size 8`, `jev controller rl-data`, `jev controller rl-update`. Code: `controller/groups.py`,
+`rl_update` in `controller/d1.py`, `FirstThen` in `controller/policy.py`.
+
+**Result** (`runs/controller/rl/first/r1/adapter`, d1-rl): 368 trajectories, 45 groups and 360
+decisions used, $0 billed (all replayed). Median within-group spread 0.018, mean |A| 0.40. Mean
+KL to SFT 0.039, clip fraction 0.64.
+
+**On val** (`scripts/val_compare.sh`; judge-free, val never becomes RL data): every val task run
+from the start with each adapter choosing, scored by the retrieval return and paired per task
+with the fixed rule's own val run; and on the 36 branched val points, each adapter's regret
+against the best branch.
+
+| System (9 val tasks) | Return | Δ vs fixed (± SE) | Recall | Cost | Batches |
+|---|---|---|---|---|---|
+| fixed rule | .0102 | — | .121 | $.022 | 3.0 |
+| d1-sft | .0084 | −.0018 ± .0026 | .141 | $.035 | 3.6 |
+| **d1-rl** | **.0129** | +.0027 ± .0077 | **.220** | $.054 | 5.2 |
+
+d1-rl searches longer than d1-sft (it finishes at 8% of the val points, d1-sft at 28%) and finds
+more important citations on 3 of the 4 tasks where its episodes differ; at the 14 val points
+whose options' returns differ, its regret is .0068 (d1-sft .0074). This is the completeness gap
+docs/05 names, at about 1.5 times d1-sft's cost (about 30% of DS-base's). With 9 tasks it is not
+resolved: the choice between d1-sft and d1-rl is made on June dev (below).
 
 ## The final test
 

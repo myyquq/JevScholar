@@ -59,6 +59,20 @@ uv run jev controller trajectories RUN ... [--out FILE]   # labelled decisions o
 uv run jev controller branches RUN [--system ctl_fixed] [--tasks N] [--per-task N] [--run-usd X] [--dry-run]
                                        # branch every legal candidate of a train/val run's points
 uv run jev controller labels RUN ... --out FILE           # soft SFT targets from branch runs
+uv run jev controller groups RUN --adapter DIR --first-only --min-spread 0.01 --per-task 0
+    [--groups 64] [--size 8] [--run-usd X] [--dry-run]
+                                       # RL groups at points where the choice matters
+                                       # (needs `controller serve --adapter DIR` running)
+uv run jev controller rl-data RUN ... --out FILE          # returns, advantages, RL examples
+scripts/train_env.sh jev controller rl-update DATA.jsonl --adapter DIR --reference SFT_DIR --out DIR
+                                       # one bounded RL update; reverted above 0.05 nats KL
+sbatch scripts/rl_round.sh             # d1-rl as a GPU job: serve, groups, rl-data, update
+scripts/train_env.sh jev controller regret DEV.jsonl --adapter DIR ... [--base]
+                                       # val decision regret against branch returns (no executor)
+uv run jev controller episodes RUN --name NAME [--adapter DIR] [--run-usd X] [--dry-run]
+                                       # every task of a val run from the start, d1 choosing
+uv run jev controller compare RUN:SYSTEM ...              # paired retrieval returns, first = baseline
+sbatch scripts/val_compare.sh          # d1-sft vs d1-rl on val: regret, episodes, comparison
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
@@ -204,3 +218,7 @@ older format that `jev controller trajectories` does not read.
 | `eval-dev`, `eval-dev2` | the controller comparisons on June dev and Nov dev2 (docs/05) |
 | `controller/sanity`, `controller/sweep-1` | the LoRA training-loop check and the offline prompt search |
 | `branches-<RUN>-b<batches>-<kind>` | counterfactual branches of a train or val run's decision points (docs/06) |
+| `controller/sft` | d1-sft: the SFT warm start (docs/06) |
+| `groups-rollouts-train-first-r1-b<batches>` | the RL groups (docs/06: bounded RL) |
+| `controller/rl/first/r1` | d1-rl: the RL update of d1-sft (`adapter/`, `metrics.json`) |
+| `compare-rollouts-val-<name>` | val episodes with one adapter choosing (docs/06; d1-rl is `d1_first1`) |
