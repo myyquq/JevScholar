@@ -149,6 +149,34 @@ are new on-policy samples, not the branches themselves (data rules above). On va
 also reports the `signal` points (option returns more than 0.01 apart) and each distribution's
 expected return against a uniform choice.
 
+**First-only round 1** (`groups-rollouts-train-first-r1-*`, `controller/rl/first/r1`; 46 points
+× 8, from the SFT adapter): 368 trajectories, all replayed from the branches' cache ($0 billed).
+45 groups used (1 tied), 360 decisions; the median within-group spread was 0.018 (40 of 45 above
+0.01), mean |A| 0.40, and every group chose more than one option. At lr 2e-5 the update moved
+too far (mean KL 0.082) and was reverted; at lr 1e-5 it was kept: mean KL 0.039 (one decision
+0.090), clip fraction 0.64. A second round from it would likely pass the KL bound, so there is
+none.
+
+**Val, all adapters** (`val-compare-32722114`; 9 tasks, retrieval return paired with the fixed
+rule):
+
+| System | Return | Δ vs fixed (± SE) | W/T/L | Recall | Cost | Batches |
+|---|---|---|---|---|---|---|
+| fixed rule (`rollouts-val`) | .0102 | — | — | .121 | $.022 | 3.0 |
+| d1-sft | .0084 | −.0018 ± .0026 | 5/0/4 | .141 | $.035 | 3.6 |
+| d1-rl r1 | .0090 | −.0011 ± .0025 | 6/0/3 | .141 | $.033 | 3.2 |
+| d1-rl r2 | .0081 | −.0020 ± .0025 | 5/0/4 | .141 | $.035 | 3.7 |
+| **d1-rl first-only** | **.0129** | +.0027 ± .0077 | 4/0/5 | **.220** | $.054 | 5.2 |
+
+On the 14 val points whose option returns differ by more than 0.01, the first-only adapter's
+expected return over a uniform choice is +.0014 (d1-sft +.0006) and its regret .0068 (d1-sft
+.0074); it finishes at 8% of all 36 points (d1-sft 28%). It is the first RL version that changes
+d1's episodes: it searches longer on 4 of the 9 tasks, finds more important citations on 3 of
+them (one from 0 to 0.5 recall), and on the fourth spends 2 more batches for nothing. Its
+recall gain is the completeness gap docs/05 names, at about 1.5 times d1-sft's cost (about 30%
+of DS-base's). With 9 tasks none of this is resolved; which d1 carries the main claim is chosen
+on June dev (below), with d1-sft and the first-only adapter as the candidates.
+
 **Comparing on val** (`controller/compare.py`, `scripts/val_compare.sh`; judge-free, val tasks
 never become RL data):
 - *Decisions.* On the 36 branched val points (`dev.jsonl`), each adapter's served choice

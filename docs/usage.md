@@ -223,3 +223,4 @@ older format that `jev controller trajectories` does not read.
 | `controller/rl/r<round>` | a bounded RL update: `adapter/` (absent if reverted), `metrics.json` |
 | `groups-<RUN>-first-r<round>-b<batches>`, `controller/rl/first/r<round>` | the first-only RL variant at points that matter (docs/06) |
 | `compare-<RUN>-<name>` | val episodes with one adapter choosing (docs/06: comparing on val) |
+| `controller/rl/first/r1` | the first-only RL adapter (lr 1e-5): the best val retrieval return so far (docs/06) |
