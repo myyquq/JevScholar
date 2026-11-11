@@ -19,6 +19,11 @@ systems:  # the trained d1 (docs/06), each adapter on its own server, named by i
     policy:
       url: http://127.0.0.1:9942
       adapter: 2fa87a6904389d5d0503cd46f5aaf0fe91107a7231ce753e4c30fa5256f79807
+  # the fixed rule at larger budgets (ctl_fixed: 3 batches): its cost-quality curve, against
+  # which the d1 controllers are compared at matched cost (`jev controller frontier`)
+  ctl_fixed_b4: {extends: ctl_fixed, policy: {batches: 4}}
+  ctl_fixed_b5: {extends: ctl_fixed, policy: {batches: 5}}
+  ctl_fixed_b6: {extends: ctl_fixed, policy: {batches: 6}}
 
 variants:
   dev: {benchmarks: {deepscholar: {split: dev, limit: 20}}}     # June dev
@@ -27,7 +32,8 @@ variants:
       deepscholar:
         split: dev
         limit: 20
-        systems: [ctl_fixed, ctl_d1, ctl_d1_sft, ctl_d1_rl]
+        systems: [ctl_fixed, ctl_d1, ctl_d1_sft, ctl_d1_rl,
+                  ctl_fixed_b4, ctl_fixed_b5, ctl_fixed_b6]
   dev2: {benchmarks: {deepscholar: {split: dev2, limit: 20}}}   # Nov dev2
   test:  # the held-out tasks; the trained controllers join once frozen
     budget: {run_usd: 15.0, judge_run_usd: 5.0}

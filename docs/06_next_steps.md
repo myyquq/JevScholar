@@ -137,6 +137,14 @@ d1-sft and d1-rl stay in the test matrix; d1 joins it if chosen. The comparison 
 and d1-rl rerun together on the 20 June dev tasks, two writer samples each, so every pair is
 measured with the same code; DS-base keeps its `eval-dev` numbers.
 
+**At matched cost.** A controller that spends more can find more without allocating better, so
+the same run also holds the fixed rule at 4, 5 and 6 batches (`ctl_fixed_b4..b6`), a cost-quality
+curve. `jev controller frontier RUN` pairs each d1 controller per task with the cheapest fixed
+budget whose mean list cost is at least its own (chosen by cost alone, so the fixed rule never
+gets less money) and reports its distance to the curve interpolated at its cost. This is the
+proposal's success test: better quality than the tuned fixed workflow at the same total cost,
+without losing citation reliability.
+
 **Cost before test.** An action-level forecast from the dev runs' bills, then a funded matrix
 frozen before generation, run in matched task chunks across arms. Six arms with two samples on
 90 tasks are 1,080 reports; the campaign has about $12.9 left of its $45 cap.

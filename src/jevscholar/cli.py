@@ -547,6 +547,16 @@ def controller_compare(
     typer.echo(table(compare(systems)))
 
 
+@controller_app.command("frontier")
+def controller_frontier(
+    run: Annotated[str, typer.Argument(help="A reported run with d1 and fixed-rule systems.")],
+) -> None:
+    """The d1 controllers against the fixed rule's cost-quality curve, at matched cost."""
+    from jevscholar.controller.frontier import frontier_report
+
+    typer.echo(frontier_report(_run_dir(run)))
+
+
 @controller_app.command("sanity-data")
 def controller_sanity_data(
     out: Annotated[Path, typer.Argument(help="Directory for train.jsonl and dev.jsonl.")],

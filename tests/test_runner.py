@@ -369,9 +369,11 @@ def test_the_june_dev_comparison_serves_each_d1_on_its_own_port():
     exp = load_experiment(EXPERIMENTS / "evaluate.yaml", "dev-trained")
     cell = exp.benchmarks["deepscholar"]
     assert (cell.split, cell.limit) == ("dev", 20)
-    assert set(cell.systems) == {
-        f"{s}{x}" for s in ("ctl_fixed", "ctl_d1", "ctl_d1_sft", "ctl_d1_rl") for x in ("", "_s1")
-    }
+    learned = ("ctl_d1", "ctl_d1_sft", "ctl_d1_rl")
+    fixed = ("ctl_fixed", "ctl_fixed_b4", "ctl_fixed_b5", "ctl_fixed_b6")
+    assert set(cell.systems) == {f"{s}{x}" for s in (*learned, *fixed) for x in ("", "_s1")}
+    batches = [exp.system_spec(s)[1]["policy"]["batches"] for s in fixed]
+    assert batches == [3, 4, 5, 6]
     ports = {}
     for system in ("ctl_d1", "ctl_d1_sft", "ctl_d1_rl", "ctl_d1_rl_s1"):
         policy = exp.system_spec(system)[1]["policy"]

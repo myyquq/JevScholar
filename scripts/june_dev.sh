@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # June dev comparison of the controllers (docs/06: which d1 carries the main claim), one GPU job:
 #   1. serve d1 (base, port 9940), d1-sft (9941) and d1-rl (9942), each in .venv-train;
-#   2. `jev run evaluate --variant dev-trained`: the fixed rule, d1, d1-sft and d1-rl on the 20
-#      June dev tasks, two writer samples each (DeepSeek; holds during DeepSeek peak hours);
-#   3. stop the servers, judge (`jev eval`) and write the report against the fixed rule.
+#   2. `jev run evaluate --variant dev-trained`: the fixed rule (3 to 6 batches), d1, d1-sft and
+#      d1-rl on the 20 June dev tasks, two writer samples each (DeepSeek; holds during DeepSeek
+#      peak hours);
+#   3. stop the servers, judge (`jev eval`), write the report against the fixed rule and the
+#      matched-cost comparison (`jev controller frontier`, runs/<RUN>/frontier.md).
 # Resumable: resubmit with the same RUN and finished tasks and judgments are kept.
 # Usage (from the repository):
 #   sbatch scripts/june_dev.sh
@@ -59,4 +61,5 @@ trap - EXIT
 [ "$JUDGE" = 1 ] || exit 0
 uv run jev eval "$RUN"
 uv run jev report "$RUN" --baseline ctl_fixed
-echo "report: runs/$RUN/report.md"
+uv run jev controller frontier "$RUN" | tee "runs/$RUN/frontier.md"
+echo "report: runs/$RUN/report.md, runs/$RUN/frontier.md"
