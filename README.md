@@ -37,6 +37,7 @@ while DeepScholar-base runs at its natural cost.
 | [docs/04_data_and_evaluation.md](docs/04_data_and_evaluation.md) | datasets and splits, the evaluation flow, scoring and statistics, cost accounting |
 | [docs/05_controller.md](docs/05_controller.md) | the controlled loop, its actions and rules, the policies, d1's prompt tuning, results |
 | [docs/06_next_steps.md](docs/06_next_steps.md) | open decisions, SFT and RL, the final test, DRB2, schedule |
+| [docs/07_experiment_log.md](docs/07_experiment_log.md) | every run, the commit and branch it ran with, and its result |
 | [docs/usage.md](docs/usage.md) | setup, commands, configuration, layout, reproducibility, run index |
 
 ## Quick start
