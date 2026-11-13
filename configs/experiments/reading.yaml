@@ -1,0 +1,47 @@
+# Reading (docs/06): what the documents' full text adds to the fixed rule's own drafts, before
+# any training. As writing.yaml: every system continues each task of a fixed-rule run from the
+# draft it submitted (start.revision 0) and executes one writing choice there: submit it
+# unchanged, `expand` it from the abstracts, `read` (revise it for coverage from the abstracts and
+# each document's full-text excerpt) or `redraft` (write the section anew from them). Branches
+# from one draft are compared per task, paired; two revision samples per system. `r_expand`
+# makes the same writer requests as writing.yaml's w_expand. The full text must be
+# fetched first (`jev data fulltext`); scripts/read_pilot.sh fetches, runs, judges and reports.
+budget: {run_usd: 3.0, judge_run_usd: 5.0}
+
+systems:
+  r_submit:
+    use: controlled
+    policy: {kind: fixed, batches: 3}
+    revise: [expand, read, redraft]
+    start: {run: rollouts-train, system: ctl_fixed, revision: 0, take: submit}
+  r_expand:
+    use: controlled
+    policy: {kind: fixed, batches: 3}
+    revise: [expand, read, redraft]
+    start: {run: rollouts-train, system: ctl_fixed, revision: 0, take: expand}
+  r_read:
+    use: controlled
+    policy: {kind: fixed, batches: 3}
+    revise: [expand, read, redraft]
+    start: {run: rollouts-train, system: ctl_fixed, revision: 0, take: read}
+  r_redraft:
+    use: controlled
+    policy: {kind: fixed, batches: 3}
+    revise: [expand, read, redraft]
+    start: {run: rollouts-train, system: ctl_fixed, revision: 0, take: redraft}
+
+benchmarks:
+  deepscholar:
+    samples: 2
+    systems: [r_submit, r_expand, r_read, r_redraft]
+
+variants:
+  train:  # the 34 train tasks (rollouts-train)
+    benchmarks: {deepscholar: {split: train}}
+  val:  # the 9 val tasks (rollouts-val)
+    benchmarks: {deepscholar: {split: val}}
+    systems:
+      r_submit: {start: {run: rollouts-val}}
+      r_expand: {start: {run: rollouts-val}}
+      r_read: {start: {run: rollouts-val}}
+      r_redraft: {start: {run: rollouts-val}}

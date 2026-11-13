@@ -15,7 +15,10 @@ page of the most productive keyword query, or finishing. After `finish` the writ
 draft. Where a cell offers revisions (`REVISIONS`), writing decisions follow, each between the
 revisions still affordable and `submit` (last): `ground` rewrites the draft so that each cited
 sentence states only what its sources support, `expand` so that it also covers the task's problem,
-the field's key ideas and sources not discussed yet. At most MAX_REVISIONS per episode. The
+the field's key ideas and sources not discussed yet. The reading revisions (`READS`, at most one
+per episode) give the writer each document's full-text excerpt besides its abstract (and keep it
+for every later revision): `read` revises the draft for coverage from them, `redraft` writes the
+section anew from them. At most MAX_REVISIONS per episode. The
 rules here are the loop's hard rules: they keep the candidates a policy may choose from, and
 leave a policy no say where only one is left. A search is legal only within the
 batch cap, if it brings a paper no other candidate brings, and if after it another step's
@@ -31,11 +34,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-Kind = Literal["abstract", "explore", "deepen", "finish", "ground", "expand", "submit"]
+Kind = Literal[
+    "abstract", "explore", "deepen", "finish", "ground", "expand", "read", "redraft", "submit"
+]
+Revision = Literal["ground", "expand", "read", "redraft"]
 Phase = Literal["retrieval", "writing", "done"]
 SEARCHES = ("abstract", "explore", "deepen")
 FINISH = "finish"
-REVISIONS = ("ground", "expand")
+REVISIONS = ("ground", "expand", "read", "redraft")
+READS = ("read", "redraft")  # the revisions that read the documents' full text
 SUBMIT = "submit"
 STOPS = (FINISH, SUBMIT)  # the candidate that ends a phase, always offered last
 MAX_REVISIONS = 2  # writing decisions that revise, per episode
@@ -141,6 +148,7 @@ class Costs:
     screen_usd: float = 0.0005  # per paper: one CoT sem_filter call (measured 0.00046)
     write_usd: float = 0.008  # the intro writer (measured 0.0036; DS-base mean 0.004)
     revise_usd: float = 0.01  # one revision: the writer's call with the draft as well
+    read_usd: float = 0.03  # a reading revision: the writer's call with full-text excerpts
     rank_usd: float = 0.0008  # per relevant paper beyond WRITE_DOCS (measured 0.0007)
     step_usd: float = 0.007  # a proposal (<= 0.0013), <= 4 page fetches (0.004), a choice
 
@@ -194,10 +202,16 @@ def numbered(draft: str, urls: Sequence[str], unknown: str = "") -> str:
 
 def write_legal(state: State, offered: tuple[str, ...], costs: Costs) -> list[Candidate]:
     """A writing decision's candidates: each offered revision while fewer than MAX_REVISIONS were
-    made and it fits the remaining budget, then `submit`."""
-    revise = len(state.revisions) < MAX_REVISIONS and costs.revise_usd <= state.remaining_usd
-    kinds = [k for k in REVISIONS if k in offered] if revise else []
-    return [Candidate(k, cost_usd=costs.revise_usd) for k in kinds] + [Candidate(SUBMIT)]
+    made and it fits the remaining budget (a reading one only while none was made), then
+    `submit`."""
+    out = []
+    if len(state.revisions) < MAX_REVISIONS:
+        read = any(k in READS for k in state.revisions)
+        for k in REVISIONS:
+            cost = costs.read_usd if k in READS else costs.revise_usd
+            if k in offered and not (read and k in READS) and cost <= state.remaining_usd:
+                out.append(Candidate(k, cost_usd=cost))
+    return [*out, Candidate(SUBMIT)]
 
 
 Pages = dict[tuple[str, int], list[dict[str, Any]]]  # (query, k) -> its top-k search rows

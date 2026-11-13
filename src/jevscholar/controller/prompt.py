@@ -46,6 +46,9 @@ WRITE_VERBS = {
     "not support",
     "expand": "rewrite to also cover the paper's problem, the field's key ideas and documents not "
     "discussed yet",
+    "read": "read the documents' full text (introductions), then rewrite to cover what the "
+    "abstracts missed",
+    "redraft": "read the documents' full text (introductions), then write the section anew",
 }
 DRAFT_CHARS = 6000  # the draft as d1 reads it, at the first level
 PREVIEW = 5  # new titles shown per search

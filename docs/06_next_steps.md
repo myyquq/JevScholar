@@ -153,6 +153,40 @@ samples each, judged. Branches from one draft share its writer noise, so the cho
 per task; `headroom` over the four choices bounds what choosing per task can gain. Labels for
 d1's writing decisions come from the same runs.
 
+**Result.** No revision beats submitting the draft: U −.011 (ground), −.003 (expand), −.007
+(expand then ground) on the 34 train tasks, every interval across 0; on val (9 tasks) expand
++.028 [−.007, .064]. A revision costs about $0.001. Choosing per task gains nothing either: the
+cross-fitted oracle reaches U .436 against .435 for submitting (train). Rewriting from the same
+abstracts adds nothing the judges see, so the writer needs more to write from.
+
+### Reading
+
+**Why.** The writer reads each document's title and abstract only (DS-base's arXiv reads, P1), so
+a revision can only rephrase what the first draft already had. The proposal's `read` action gives
+it the documents' full text.
+
+**Actions.** Two more revisions (`READS`, at most one per episode, `Costs.read_usd`): `read`
+revises the draft for coverage with each document's full-text excerpt after its abstract,
+`redraft` is DS-base's intro writer again from them, without the draft; every later revision
+keeps the excerpts. The excerpt is the PDF's text from its introduction's heading, cut to 3000
+characters (`search/fulltext.py`). `jev data fulltext RUN...` fetches the PDFs of the runs'
+writer documents beforehand, at the version their URL names (the frozen snapshot's, so nothing
+written later), from export.arxiv.org at one request per 3 s, into `cache/fulltext/`; a run reads
+that cache only, and a reading revision with no cached text for any document fails the task. The
+judges still check citations against the abstracts (the benchmark's source material), so a claim
+only the full text supports can count as unsupported: cite_p and claim support are, if anything,
+biased against reading.
+
+**Pilot** (`sbatch scripts/read_pilot.sh`, `configs/experiments/reading.yaml`, runs
+`read-pilot-train` and `read-pilot-val`). As the writing pilot: from each submitted draft of the
+fixed rule's train and val runs, submit it, expand it (from the abstracts), read, or redraft, two
+samples each, judged, with the per-task headroom. Reading every document is the upper bound: if
+it adds nothing, choosing which documents to read cannot either, and d1 is not trained on it.
+
+**Versions.** On branch `read-action` (from `write-actions`). The reading revisions are offered
+only where a cell lists them in `revise`, so every earlier cell keeps its identity (the pins in
+`tests/test_writing.py`); `tests/test_reading.py` covers the cache and the loop offline.
+
 **Versions.** On branch `write-actions`. A cell without `revise` (and a fixed rule without its
 `revise` sequence, a start without `revision`) has exactly its earlier identity: the recorded
 identities of the June dev systems, the train rollouts, a branch and an RL member are pinned by

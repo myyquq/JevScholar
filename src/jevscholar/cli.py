@@ -75,6 +75,18 @@ def data_arxiv_index() -> None:
     typer.echo(arxiv_local.build_index())
 
 
+@data_app.command("fulltext")
+def data_fulltext(
+    runs: Annotated[list[str], typer.Argument(help="Runs whose writer documents to fetch.")],
+) -> None:
+    """Fetch the full text of the runs' writer documents (arXiv PDFs) into cache/fulltext/."""
+    from jevscholar.search import fulltext
+
+    urls = [u for run in runs for u in fulltext.run_docs(_run_dir(run))]
+    typer.echo(f"{len(set(urls))} documents")
+    typer.echo(dict(fulltext.fetch(urls)))
+
+
 # --------------------------------------------------------------------------- runs
 @app.command()
 def run(

@@ -37,7 +37,7 @@ from pydantic import (
 
 from jevscholar.controller.d1 import user_turn
 from jevscholar.controller.prompt import LEVELS, Profile
-from jevscholar.controller.state import FINISH, MAX_BATCHES, SUBMIT, Candidate, State
+from jevscholar.controller.state import FINISH, MAX_BATCHES, SUBMIT, Candidate, Revision, State
 from jevscholar.search.client import Meter
 from jevscholar.systems import chat
 from jevscholar.types import Strict, TaskContext
@@ -69,7 +69,7 @@ class Fixed(Strict):
     kind: Literal["fixed"] = "fixed"
     retrieval: tuple[Literal["abstract", "explore", "deepen"], ...] = ("abstract", "explore")
     batches: int = MAX_BATCHES  # finish after this many batches
-    revise: tuple[Literal["ground", "expand"], ...] = ()  # the revisions to make, then submit
+    revise: tuple[Revision, ...] = ()  # the revisions to make, then submit
 
     @model_serializer(mode="wrap")
     def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:

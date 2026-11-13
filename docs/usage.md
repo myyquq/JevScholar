@@ -36,6 +36,7 @@ environment, `.venv-train`. `scripts/train_env.sh` runs any command there.
 uv run jev data fetch [--pin]          # download pinned sources into data/raw/, verify sha256
 uv run jev data prepare                # data/derived/ and the committed data/splits/
 uv run jev data arxiv-index            # the local BM25 arXiv index
+uv run jev data fulltext RUN ...       # full text of the runs' writer documents (arXiv PDFs) into cache/fulltext/
 
 # runs: RUN is a run id under runs/, or a path
 uv run jev run EXPERIMENT --variant V [--set a.b=value] [--only BENCH] [--run-id RUN]
@@ -78,6 +79,7 @@ uv run jev controller frontier RUN     # the d1 controllers against the fixed ru
 uv run jev controller headroom RUN [--metric M ...]   # a per-task stopping oracle's gain
                                        # over the fixed budgets at matched cost (cross-fitted)
 sbatch scripts/write_pilot.sh          # writing decisions: revisions of the fixed rule's drafts (CPU)
+sbatch scripts/read_pilot.sh           # reading: full-text fetch, then revisions from it (CPU)
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
@@ -90,7 +92,7 @@ judging stop at their budgets (docs/04) and resume where they stopped.
 
 ## Configuration
 
-Seven files:
+Eight files:
 
 | File | What it holds |
 |---|---|
@@ -101,6 +103,7 @@ Seven files:
 | `configs/experiments/controller.yaml` | the controller on train and val (variants `smoke`, `rollouts`, `val`) |
 | `configs/experiments/evaluate.yaml` | the main comparison at B0 (variants `dev`, `dev2`, `test`, `replay`) |
 | `configs/experiments/writing.yaml` | the writing-decision pilot: revisions of the fixed rule's drafts (variants `train`, `val`) |
+| `configs/experiments/reading.yaml` | the reading pilot: the fixed rule's drafts revised or redrafted from the documents' full text (variants `train`, `val`) |
 
 **An experiment** names its systems per benchmark, with the shared settings at the top:
 
@@ -162,7 +165,7 @@ src/jevscholar/
   runner.py judging.py                     running systems; judging their exports
   artifacts.py analysis.py report.py rewards.py   run readers; scoring; report.md; U and r
   data.py render.py                        data fetch/prepare; citations and export rendering
-  search/                                  arXiv (local and API), Tavily, OpenAlex; access policy
+  search/                                  arXiv (local and API), Tavily, OpenAlex; access policy; full text
   benchmarks/                              DeepScholar-Bench, DRB2, ResearchQA and their scorers
   systems/                                 simple_rag, closed_book, deepscholar_base, controlled,
                                            fixed_evidence
@@ -224,6 +227,7 @@ older format that `jev controller trajectories` does not read.
 | `eval-dev`, `eval-dev2` | the controller comparisons on June dev and Nov dev2 (docs/05) |
 | `eval-dev-trained` | the fixed rule at 3 to 6 batches, d1, d1-sft and d1-rl on June dev: the choice of d1 and the matched-cost comparison (docs/06) |
 | `write-pilot-train`, `write-pilot-val` | the fixed rule's drafts submitted, grounded, expanded, or expanded then grounded (docs/06: writing decisions) |
+| `read-pilot-train`, `read-pilot-val` | the fixed rule's drafts submitted, expanded, read or redrafted from the full text (docs/06: reading) |
 | `controller/sanity`, `controller/sweep-1` | the LoRA training-loop check and the offline prompt search |
 | `branches-<RUN>-b<batches>-<kind>` | counterfactual branches of a train or val run's decision points (docs/06) |
 | `controller/sft` | d1-sft: the SFT warm start (docs/06) |

@@ -35,6 +35,12 @@ stay the same) and REVISE's instructions, on the `revise` stage. Each writing de
 to writes.jsonl, in the decision format; the earlier drafts are kept in the state. A run can also
 continue from a writing decision point (`start.revision`): the n-th of an earlier run's task, or,
 for a run without writes.jsonl, its final state (n = 0) with the draft it submitted.
+
+The reading revisions (`read`, `redraft`) give the writer each document's full-text excerpt from
+the local cache (search/fulltext.py; fetched beforehand, never during a run) besides its abstract,
+for that and every later revision: `read` revises the draft for coverage from them, `redraft` is
+DS-base's intro writer again from them, without the draft. A reading revision with no excerpt in
+the cache for any document fails the task. The judges still read each source's abstract.
 """
 
 from __future__ import annotations
@@ -61,6 +67,7 @@ from jevscholar.controller.state import (
     MAX_BATCHES,
     MAX_PAGES,
     PAGE,
+    READS,
     SEARCHES,
     SUBMIT,
     WRITE_DOCS,
@@ -71,6 +78,7 @@ from jevscholar.controller.state import (
     Paper,
     Point,
     Query,
+    Revision,
     State,
     affordable,
     legal,
@@ -81,6 +89,7 @@ from jevscholar.controller.state import (
     write_legal,
 )
 from jevscholar.render import finalize
+from jevscholar.search import fulltext
 from jevscholar.systems import chat
 from jevscholar.systems import deepscholar_base as dsb
 from jevscholar.types import Report, Strict, System, Task, TaskContext
@@ -114,6 +123,13 @@ REVISE = {
     "relevant sources in the source material that the existing section does not discuss yet. "
     "Keep every supported statement of the existing section with its citations, and ground every "
     "new statement in the source material with citations.",
+    "read": "Revision for coverage from the full text: the source material now also gives an "
+    "excerpt of each source's full text (its introduction). Rewrite the existing section so that "
+    "it uses what these excerpts add beyond the abstracts: each source's problem, method and "
+    "findings stated precisely, how the sources relate to each other and to the paper in the user "
+    "query, and the relevant sources the existing section does not discuss yet. Keep every "
+    "supported statement of the existing section with its citations, and ground every new "
+    "statement in the source material with citations.",
 }
 
 
@@ -151,7 +167,7 @@ class Controlled(System):
         costs: dict[str, float] = Field(default_factory=dict)  # Costs overrides
         start: Start | None = None
         sample: int = 0  # > 0: an independent writer sample
-        revise: tuple[Literal["ground", "expand"], ...] = ()  # revisions offered after drafting
+        revise: tuple[Revision, ...] = ()  # revisions offered after drafting
 
         @model_serializer(mode="wrap")
         def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -212,6 +228,7 @@ class Controlled(System):
             relevant=len(state.relevant()),
             spent_usd=state.spent_usd,
             offset_usd=state.offset_usd,
+            read_docs=loop.read_docs,
         )
 
 
@@ -271,6 +288,7 @@ class Loop:
         `revise`: the revisions offered at writing decisions (none: no writing decisions)."""
         self.ctx, self.top, self.costs, self.actions, self.sample = ctx, top, costs, actions, sample
         self.revise = revise
+        self.read_docs = 0  # documents the writer read the full text of (reading revisions)
         self.screen_cfg = dsb.build_configs(ctx, {"use_sem_topk": False})
         self.write_cfg = dsb.build_configs(ctx, {"use_sem_filter": False}, sample)
         self.agentic = importlib.import_module("deepscholar_base.search.agentic_search")
@@ -351,8 +369,11 @@ class Loop:
         self, state: State, policy: Policy, docs: pd.DataFrame, take: str | None
     ) -> None:
         """Writing decisions until `submit`: each between the affordable revisions offered and
-        `submit`, logged to writes.jsonl once executed."""
+        `submit`, logged to writes.jsonl once executed. After a reading revision (this run's or
+        the start point's) the writer's documents carry their full-text excerpts."""
         state.phase = "writing"
+        if any(k in READS for k in state.revisions):
+            docs = self.reading(docs)
         while True:
             self.sync(state)
             offered = write_legal(state, self.revise, self.costs)
@@ -372,6 +393,8 @@ class Loop:
             if overridden:  # the decision's own cost left no room for the revision: submit
                 choice = offered[-1]
             state.decisions += 1
+            if choice.kind in READS and not self.read_docs:
+                docs = self.reading(docs)
             if choice.kind != SUBMIT:
                 state.drafts.append(state.draft or "")
                 state.revisions.append(choice.kind)
@@ -501,6 +524,23 @@ class Loop:
             state.docs = list(docs.url)
         return pd.DataFrame([self.rows[url] for url in state.docs])
 
+    def reading(self, docs: pd.DataFrame) -> pd.DataFrame:
+        """The writer's documents with each cached full-text excerpt after its abstract (in the
+        `context` the writer reads, DS-base's "title[url]: snippet")."""
+        docs = docs.copy()
+        contexts, n = [], 0
+        for row in docs.to_dict("records"):
+            text = fulltext.excerpt(row["url"])
+            context = row["context"]
+            if text:
+                context, n = f"{context}\nFull text (excerpt): {text}", n + 1
+            contexts.append(context)
+        if not n:
+            raise RuntimeError("no full text cached for any document (jev data fulltext)")
+        docs["context"] = contexts
+        self.read_docs = n
+        return docs
+
     async def write(self, topic: str, docs: pd.DataFrame) -> str:
         """DS-base's intro writer (P10, no background)."""
         return await self.top.generate_intro_section(topic, docs, "", self.write_cfg)
@@ -508,12 +548,16 @@ class Loop:
     async def rewrite(self, state: State, kind: str, docs: pd.DataFrame) -> str:
         """One revision: DS-base's section writer with the draft as its existing content
         (citations as numbers into `docs`, its own input form) and REVISE[kind], on the
-        `revise` stage."""
+        `revise` stage. `redraft`: DS-base's intro instructions and no existing content."""
         summary = importlib.import_module("deepscholar_base.utils.summary_generation")
-        existing = numbered(state.draft or "", state.docs)
         lm = dsb.stage_lm(self.ctx, "revise", self.sample)
+        if kind == "redraft":
+            prompts = importlib.import_module("deepscholar_base.utils.prompts")
+            instructions, existing = prompts.intro_section_instructions, ""
+        else:
+            instructions, existing = REVISE[kind], numbered(state.draft or "", state.docs)
         return await summary.generate_section_summary_with_citations(
-            state.topic, docs, REVISE[kind], existing, lm=lm
+            state.topic, docs, instructions, existing, lm=lm
         )
 
     # ------------------------------------------------------------------ logs
