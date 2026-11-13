@@ -183,6 +183,14 @@ fixed rule's train and val runs, submit it, expand it (from the abstracts), read
 samples each, judged, with the per-task headroom. Reading every document is the upper bound: if
 it adds nothing, choosing which documents to read cannot either, and d1 is not trained on it.
 
+**Result.** The writer read 8-26 documents' excerpts per task (763 of 764 PDFs fetched), and
+reading adds nothing: U against submitting the draft −.003 (read), +.005 (redraft), −.003
+(expand) on the 34 train tasks, every interval across 0, alike on val (9 tasks); redraft lowers
+cite_p on val (−.107 [−.237, .023]). Reading costs $0.004 per task. The cross-fitted per-task
+oracle over the four choices gains U +.010 [−.013, .032] at read's cost (train). With the
+retrieval and writing pilots: no decision this loop can make moves the judged scores beyond the
+writer's sample-to-sample noise at matched cost; only more search budget does (the fixed curve).
+
 **Versions.** On branch `read-action` (from `write-actions`). The reading revisions are offered
 only where a cell lists them in `revise`, so every earlier cell keeps its identity (the pins in
 `tests/test_writing.py`); `tests/test_reading.py` covers the cache and the loop offline.
