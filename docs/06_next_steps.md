@@ -124,6 +124,40 @@ whose options' returns differ, its regret is .0068 (d1-sft .0074). This is the c
 docs/05 names, at about 1.5 times d1-sft's cost (about 30% of DS-base's). With 9 tasks it is not
 resolved: the choice between d1-sft and d1-rl is made on June dev (below).
 
+### Writing decisions
+
+**Why.** On June dev (run `eval-dev-trained`) the fixed rule run at more batches gains about as
+much as any d1 controller: at matched cost every d1 lies on or below the fixed rule's curve
+(`jev controller frontier`), and a per-task oracle over the fixed budgets, cross-fitted on the
+two writer samples, gains nothing (`jev controller headroom`: U +.011 [−.036, .057] at 4
+batches, −.011 at 6; in-sample +.05, all writer noise). Retrieval decisions leave the report
+almost unchanged (docs/03: every important citation adds +0.029 nugget coverage); the writing is
+where the scores are made. So the controller also decides how the section is written, as the
+proposal's action space did (search, read, write, revise).
+
+**Actions.** After the first draft, writing decisions (`revise` in a controlled cell; none by
+default), each between `submit` (last) and the revisions still affordable, at most two:
+`ground` rewrites the draft so that each cited sentence states only what its sources support,
+`expand` so that it also covers the paper's problem, the field's key ideas and documents not
+discussed yet (docs/03: 71% of the nuggets restate the abstract or frame the field). A revision
+is DS-base's own section writer again, with the draft as its existing content (citations as
+numbers into the same documents), on the `revise` stage. d1 reads the task, the budget, the
+revisions made, the documents' titles and the draft (`render_write`). Each writing decision is
+logged to writes.jsonl; a run continues from one with `start.revision` (n revisions made; for a
+run before writing decisions, its submitted draft is revision 0).
+
+**Pilot** (`sbatch scripts/write_pilot.sh`, `configs/experiments/writing.yaml`, runs
+`write-pilot-train` and `write-pilot-val`). From each submitted draft of the fixed rule's train
+and val runs: submit it unchanged, ground it, expand it, or expand then ground, two revision
+samples each, judged. Branches from one draft share its writer noise, so the choices are paired
+per task; `headroom` over the four choices bounds what choosing per task can gain. Labels for
+d1's writing decisions come from the same runs.
+
+**Versions.** On branch `write-actions`. A cell without `revise` (and a fixed rule without its
+`revise` sequence, a start without `revision`) has exactly its earlier identity: the recorded
+identities of the June dev systems, the train rollouts, a branch and an RL member are pinned by
+`tests/test_writing.py`.
+
 ## The final test
 
 **Systems** (`jev run evaluate --variant test`, the first 90 Nov test tasks, two writer samples

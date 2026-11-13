@@ -215,3 +215,24 @@ def test_d1_chooses_a_revision(gateway, revising, d1_server, tmp_path):  # noqa:
     assert asked and all(
         w["probs"] and "draft" in w["input"]["requests"][0]["state"] for w in asked
     )
+
+
+def test_the_pilot_branches_every_draft_of_its_source_run():
+    from jevscholar.config import load_experiment
+    from jevscholar.paths import EXPERIMENTS
+
+    for variant, run, split in (
+        ("train", "rollouts-train", "train"),
+        ("val", "rollouts-val", "val"),
+    ):
+        exp = load_experiment(EXPERIMENTS / "writing.yaml", variant)
+        cell = exp.benchmarks["deepscholar"]
+        assert cell.split == split and len(cell.systems) == 8  # four choices, two samples
+        takes = {}
+        for system in cell.systems:
+            params = exp.system_spec(system)[1]
+            start = params["start"]
+            assert (start["run"], start["system"], start["revision"]) == (run, "ctl_fixed", 0)
+            takes[system] = start["take"]
+            Controlled(params)  # builds
+        assert takes["w_expand_ground_s1"] == "expand" and takes["w_submit"] == "submit"

@@ -1,0 +1,46 @@
+# Writing decisions (docs/06): what revising the fixed rule's own drafts does, before any training.
+# Every system continues each task of a fixed-rule run from the draft it submitted (start.revision
+# 0, the run's final state: same documents, same draft) and executes one writing choice there:
+# submit it unchanged, `ground` it, `expand` it, or expand then ground. Branches from one draft
+# share its writer noise, so the choices are compared per task, paired. Two independent revision
+# samples per system (the revise stage's replay namespace); `submit`'s two are the same report.
+# No GPU: the fixed rule decides. scripts/write_pilot.sh runs, judges and reports both variants.
+budget: {run_usd: 3.0, judge_run_usd: 5.0}
+
+systems:
+  w_submit:
+    use: controlled
+    policy: {kind: fixed, batches: 3}
+    revise: [ground, expand]
+    start: {run: rollouts-train, system: ctl_fixed, revision: 0, take: submit}
+  w_ground:
+    use: controlled
+    policy: {kind: fixed, batches: 3}
+    revise: [ground, expand]
+    start: {run: rollouts-train, system: ctl_fixed, revision: 0, take: ground}
+  w_expand:
+    use: controlled
+    policy: {kind: fixed, batches: 3}
+    revise: [ground, expand]
+    start: {run: rollouts-train, system: ctl_fixed, revision: 0, take: expand}
+  w_expand_ground:  # expand, then the rule's next revision: ground
+    use: controlled
+    policy: {kind: fixed, batches: 3, revise: [expand, ground]}
+    revise: [ground, expand]
+    start: {run: rollouts-train, system: ctl_fixed, revision: 0, take: expand}
+
+benchmarks:
+  deepscholar:
+    samples: 2
+    systems: [w_submit, w_ground, w_expand, w_expand_ground]
+
+variants:
+  train:  # the 34 train tasks (rollouts-train): also the writing decisions' first labels
+    benchmarks: {deepscholar: {split: train}}
+  val:  # the 9 val tasks (rollouts-val)
+    benchmarks: {deepscholar: {split: val}}
+    systems:
+      w_submit: {start: {run: rollouts-val}}
+      w_ground: {start: {run: rollouts-val}}
+      w_expand: {start: {run: rollouts-val}}
+      w_expand_ground: {start: {run: rollouts-val}}

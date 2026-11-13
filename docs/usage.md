@@ -77,6 +77,7 @@ sbatch scripts/june_dev.sh             # fixed (3-6 batches), d1, d1-sft, d1-rl 
 uv run jev controller frontier RUN     # the d1 controllers against the fixed rule at matched cost
 uv run jev controller headroom RUN [--metric M ...]   # a per-task stopping oracle's gain
                                        # over the fixed budgets at matched cost (cross-fitted)
+sbatch scripts/write_pilot.sh          # writing decisions: revisions of the fixed rule's drafts (CPU)
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
@@ -89,7 +90,7 @@ judging stop at their budgets (docs/04) and resume where they stopped.
 
 ## Configuration
 
-Six files:
+Seven files:
 
 | File | What it holds |
 |---|---|
@@ -99,6 +100,7 @@ Six files:
 | `configs/experiments/baselines.yaml` | DS-base and the simple baselines on the dev splits (variants `june`, `nov`, `gpt41`) |
 | `configs/experiments/controller.yaml` | the controller on train and val (variants `smoke`, `rollouts`, `val`) |
 | `configs/experiments/evaluate.yaml` | the main comparison at B0 (variants `dev`, `dev2`, `test`, `replay`) |
+| `configs/experiments/writing.yaml` | the writing-decision pilot: revisions of the fixed rule's drafts (variants `train`, `val`) |
 
 **An experiment** names its systems per benchmark, with the shared settings at the top:
 
@@ -221,6 +223,7 @@ older format that `jev controller trajectories` does not read.
 | `ctl-val` | the controllers on val; the fixed rule's batch count (docs/05) |
 | `eval-dev`, `eval-dev2` | the controller comparisons on June dev and Nov dev2 (docs/05) |
 | `eval-dev-trained` | the fixed rule at 3 to 6 batches, d1, d1-sft and d1-rl on June dev: the choice of d1 and the matched-cost comparison (docs/06) |
+| `write-pilot-train`, `write-pilot-val` | the fixed rule's drafts submitted, grounded, expanded, or expanded then grounded (docs/06: writing decisions) |
 | `controller/sanity`, `controller/sweep-1` | the LoRA training-loop check and the offline prompt search |
 | `branches-<RUN>-b<batches>-<kind>` | counterfactual branches of a train or val run's decision points (docs/06) |
 | `controller/sft` | d1-sft: the SFT warm start (docs/06) |
