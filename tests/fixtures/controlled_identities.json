@@ -1,0 +1,475 @@
+{
+ "eval-dev-trained/ctl_fixed": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 3
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  }
+ },
+ "eval-dev-trained/ctl_d1": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "d1"
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "d1"
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "d1",
+    "adapter": null,
+    "profile": {
+     "titles": 10,
+     "style": "sections",
+     "threshold": 0.5
+    },
+    "sample": false
+   }
+  }
+ },
+ "eval-dev-trained/ctl_d1_sft": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "d1",
+    "url": "http://127.0.0.1:9941",
+    "adapter": "dabf7875e4091468400e50fa90a67c54d2dbce7969ac73d97df05280d03c45b6"
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "d1",
+     "url": "http://127.0.0.1:9941",
+     "adapter": "dabf7875e4091468400e50fa90a67c54d2dbce7969ac73d97df05280d03c45b6"
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "d1",
+    "adapter": "dabf7875e4091468400e50fa90a67c54d2dbce7969ac73d97df05280d03c45b6",
+    "profile": {
+     "titles": 10,
+     "style": "sections",
+     "threshold": 0.5
+    },
+    "sample": false
+   }
+  }
+ },
+ "eval-dev-trained/ctl_d1_rl": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "d1",
+    "url": "http://127.0.0.1:9942",
+    "adapter": "2fa87a6904389d5d0503cd46f5aaf0fe91107a7231ce753e4c30fa5256f79807"
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "d1",
+     "url": "http://127.0.0.1:9942",
+     "adapter": "2fa87a6904389d5d0503cd46f5aaf0fe91107a7231ce753e4c30fa5256f79807"
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "d1",
+    "adapter": "2fa87a6904389d5d0503cd46f5aaf0fe91107a7231ce753e4c30fa5256f79807",
+    "profile": {
+     "titles": 10,
+     "style": "sections",
+     "threshold": 0.5
+    },
+    "sample": false
+   }
+  }
+ },
+ "eval-dev-trained/ctl_fixed_b4": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 4
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 4
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 4
+   }
+  }
+ },
+ "eval-dev-trained/ctl_fixed_b5": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 5
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 5
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 5
+   }
+  }
+ },
+ "eval-dev-trained/ctl_fixed_b6": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 6
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 6
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 6
+   }
+  }
+ },
+ "rollouts-train/ctl_fixed": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 3
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  }
+ },
+ "branches-rollouts-train-b1-explore/branch": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   },
+   "start": {
+    "run": "rollouts-train",
+    "system": "ctl_fixed",
+    "batches": 1,
+    "take": "explore"
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 3
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": {
+     "run": "rollouts-train",
+     "system": "ctl_fixed",
+     "batches": 1,
+     "take": "explore"
+    },
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  }
+ },
+ "groups-rollouts-train-first-r1-b1/g0": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "first",
+    "first": {
+     "kind": "d1",
+     "sample": true,
+     "adapter": "dabf7875e4091468400e50fa90a67c54d2dbce7969ac73d97df05280d03c45b6"
+    },
+    "then": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 3
+    }
+   },
+   "start": {
+    "run": "rollouts-train",
+    "system": "ctl_fixed",
+    "batches": 1
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "first",
+     "first": {
+      "kind": "d1",
+      "sample": true,
+      "adapter": "dabf7875e4091468400e50fa90a67c54d2dbce7969ac73d97df05280d03c45b6"
+     },
+     "then": {
+      "kind": "fixed",
+      "retrieval": [
+       "abstract",
+       "explore"
+      ],
+      "batches": 3
+     }
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": {
+     "run": "rollouts-train",
+     "system": "ctl_fixed",
+     "batches": 1
+    },
+    "sample": 0
+   },
+   "policy": {
+    "kind": "first",
+    "first": {
+     "kind": "d1",
+     "adapter": "dabf7875e4091468400e50fa90a67c54d2dbce7969ac73d97df05280d03c45b6",
+     "profile": {
+      "titles": 10,
+      "style": "sections",
+      "threshold": 0.5
+     },
+     "sample": true
+    },
+    "then": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 3
+    }
+   }
+  }
+ }
+}

@@ -1,4 +1,4 @@
-"""What a decision model reads at a retrieval decision, and how its answer becomes a choice.
+"""What a decision model reads at a decision, and how its answer becomes a choice.
 
 `render` turns a state and its legal candidates into d1's `choice` schema: a view of the state
 (the task, the remaining budget and batches, each search's yield, the latest relevant titles) and
@@ -7,6 +7,11 @@ the new papers it would screen. A `Profile` fixes how many relevant titles are l
 checkpoint lays the state out (`style`) and the stopping threshold; its defaults are d1's. Long
 states are shown at shorter `LEVELS` until they fit d1's validated length; the budget and the
 batch count are never cut.
+
+At a writing decision (`render_write`) the view is the task, the budget, the revisions made, the
+writer's documents (titles) and the draft, with the citations shown as numbers into that list;
+the options are the revisions and `submit`. Long drafts are cut to DRAFT_CHARS (shorter at the
+later LEVELS).
 """
 
 from __future__ import annotations
@@ -15,7 +20,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from jevscholar.controller.state import FINISH, SEARCHES, Candidate, State
+from jevscholar.controller.state import (
+    SEARCHES,
+    STOPS,
+    SUBMIT,
+    Candidate,
+    State,
+    numbered,
+)
 
 INSTRUCTIONS = (
     "Choose the next step of the literature search for the related-work section of the paper in "
@@ -23,6 +35,19 @@ INSTRUCTIONS = (
     "lines of prior work are not yet covered; finish once they are covered, or once the last "
     "searches found few new relevant papers."
 )
+WRITE_INSTRUCTIONS = (
+    "Choose the next step in writing the related-work section of the paper in the task. Revise "
+    "while the draft states more than its cited sources support, or misses the paper's problem, "
+    "the field's key ideas or relevant documents; submit once another revision would add little "
+    "for its cost."
+)
+WRITE_VERBS = {
+    "ground": "check every cited sentence against its sources and rewrite or drop what they do "
+    "not support",
+    "expand": "rewrite to also cover the paper's problem, the field's key ideas and documents not "
+    "discussed yet",
+}
+DRAFT_CHARS = 6000  # the draft as d1 reads it, at the first level
 PREVIEW = 5  # new titles shown per search
 LEVELS = ((None, None), (10, 3), (5, 2), (0, 1))  # (titles, preview) caps for long states
 VERBS = {"abstract": "search with", "explore": "search", "deepen": "next page of"}
@@ -57,6 +82,31 @@ def render(
         "instructions": INSTRUCTIONS,
         "criteria": criteria,
     }
+
+
+def render_write(
+    state: State, candidates: Sequence[Candidate], docs: Sequence[str], *, chars: int = DRAFT_CHARS
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(state, question) at a writing decision; `docs` are the writer's documents' titles, in the
+    order of state.docs, and the draft's citations are shown as their numbers ([3])."""
+    draft = numbered(state.draft or "", state.docs, "[?]")
+    cut = draft if len(draft) <= chars else draft[:chars] + " ..."
+    view = {
+        "task": state.topic,
+        "phase": "writing",
+        "budget": f"${state.remaining_usd:.3f} of ${state.budget_usd:.3f} left",
+        "revisions": ", ".join(state.revisions) or "none",
+        "documents": [f"[{i + 1}] {t}" for i, t in enumerate(docs)],
+        "draft": cut,
+    }
+    criteria = {}
+    for i, c in enumerate(candidates):
+        if c.kind == SUBMIT:
+            text = "submit the draft as the final section"
+        else:
+            text = f"{WRITE_VERBS[c.kind]} (about ${c.cost_usd:.3f})"
+        criteria[f"{i + 1}. {c.kind}"] = text
+    return view, {"type": "choice", "instructions": WRITE_INSTRUCTIONS, "criteria": criteria}
 
 
 def label(state: State, query: str) -> str:
@@ -105,6 +155,12 @@ class Profile:
         if len(candidates) < 2:
             raise ValueError("a single candidate is executed as forced, not asked")
         cap_titles, cap_preview = LEVELS[level]
+        if candidates[-1].kind == SUBMIT:
+            titles = {p.url: p.row.get("title", "") for p in state.papers}
+            docs = [titles.get(url, "") for url in state.docs]
+            chars = DRAFT_CHARS >> level  # halved at each later level
+            view, question = render_write(state, candidates, docs, chars=chars)
+            return {"state": view, "questions": [question]}
         view, question = render(
             state,
             candidates,
@@ -114,9 +170,9 @@ class Profile:
         return {"state": view, "questions": [question]}
 
     def pick(self, candidates: Sequence[Candidate], dist: Sequence[float]) -> int:
-        """The chosen candidate: `finish` at `threshold`, else the most probable."""
+        """The chosen candidate: `finish` (or `submit`) at `threshold`, else the most probable."""
         last = len(candidates) - 1
-        if self.threshold is None or candidates[last].kind != FINISH or not last:
+        if self.threshold is None or candidates[last].kind not in STOPS or not last:
             return max(range(len(dist)), key=dist.__getitem__)
         if dist[last] >= self.threshold:
             return last

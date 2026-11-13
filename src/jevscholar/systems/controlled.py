@@ -26,6 +26,15 @@ to that point is reported as `offset_usd`. With `take` it executes that candidat
 of asking the policy (a counterfactual branch, controller/branches.py), logged as `taken`.
 `sample` > 0 gives the writer its own replay namespace: an independent sample from the same
 evidence.
+
+Writing decisions (`revise`, empty by default: the cell then is what it was before they existed)
+follow the first draft: the policy chooses among the offered revisions and `submit`
+(controller/state.py: write_legal). A revision calls DS-base's own section writer again, with the
+current draft as its existing content (citations as numbers into the writer's documents, which
+stay the same) and REVISE's instructions, on the `revise` stage. Each writing decision is appended
+to writes.jsonl, in the decision format; the earlier drafts are kept in the state. A run can also
+continue from a writing decision point (`start.revision`): the n-th of an earlier run's task, or,
+for a run without writes.jsonl, its final state (n = 0) with the draft it submitted.
 """
 
 from __future__ import annotations
@@ -53,6 +62,7 @@ from jevscholar.controller.state import (
     MAX_PAGES,
     PAGE,
     SEARCHES,
+    SUBMIT,
     WRITE_DOCS,
     Candidate,
     Costs,
@@ -64,9 +74,11 @@ from jevscholar.controller.state import (
     State,
     affordable,
     legal,
+    numbered,
     restore,
     room,
     snapshot,
+    write_legal,
 )
 from jevscholar.render import finalize
 from jevscholar.systems import chat
@@ -90,26 +102,41 @@ Searches so far (new papers, relevant):
 Relevant papers found so far:
 {titles}"""
 LIST_ITEM = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
+REVISE = {
+    "ground": "Revision for citation accuracy: rewrite the existing section so that every sentence "
+    "that cites a source states only what that source's material supports. Check each citation "
+    "against the source material: move a citation that points to the wrong source to the right "
+    "one, and soften or remove statements no source supports. Keep the title, the structure and "
+    "every supported statement with its citations; do not add new topics.",
+    "expand": "Revision for coverage: rewrite the existing section so that it also covers what a "
+    "reader of the related-work section of the paper in the user query expects: the problem the "
+    "paper addresses and why it matters, the key concepts and lines of work of its field, and the "
+    "relevant sources in the source material that the existing section does not discuss yet. "
+    "Keep every supported statement of the existing section with its citations, and ground every "
+    "new statement in the source material with citations.",
+}
 
 
 class Start(Strict):
     """A decision point of an earlier run to continue from: the first of the task's decision
-    points in runs/<run>/<bench>/<system> after this many retrieval batches; with `take`, the
-    candidate of that kind is executed there instead of asking the policy (an error where the
-    rules do not offer it)."""
+    points in runs/<run>/<bench>/<system> after this many retrieval batches, or with `revision`
+    its writing decision point after that many revisions; with `take`, the candidate of that kind
+    is executed there instead of asking the policy (an error where the rules do not offer it)."""
 
     run: str
     system: str
     batches: int = 0
     take: Kind | None = None
+    revision: int | None = None
 
     @model_serializer(mode="wrap")
     def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        """Without `take`, the fields a start had before `take` existed: its cell identity (and
-        so the runs made with it) stays the same."""
+        """Without `take` or `revision`, the fields a start had before they existed: its cell
+        identity (and so the runs made with it) stays the same."""
         out = handler(self)
-        if self.take is None:
-            out.pop("take", None)
+        for key in ("take", "revision"):
+            if getattr(self, key) is None:
+                out.pop(key, None)
         return out
 
 
@@ -124,6 +151,15 @@ class Controlled(System):
         costs: dict[str, float] = Field(default_factory=dict)  # Costs overrides
         start: Start | None = None
         sample: int = 0  # > 0: an independent writer sample
+        revise: tuple[Literal["ground", "expand"], ...] = ()  # revisions offered after drafting
+
+        @model_serializer(mode="wrap")
+        def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+            """Without revisions, the parameters a cell had before writing decisions existed."""
+            out = handler(self)
+            if not self.revise:
+                out.pop("revise", None)
+            return out
 
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__(params)
@@ -145,11 +181,12 @@ class Controlled(System):
         top, task, p = dsb.install(), ctx.task, self.p
         budget = ctx.cap_usd if p.budget_usd is None else p.budget_usd
         take = None if p.start is None else p.start.take
+        writing = p.start is not None and p.start.revision is not None
         if p.start is None:
             state = State(task.prompt, budget, task.meta.get("abstract", ""), p.max_batches)
             first, pages = None, {}
         else:
-            point = locate(task, p.start)
+            point = locate_write(task, p.start) if writing else locate(task, p.start)
             state, first, pages = point.state, point.candidates, point.pages
             if state.topic != task.prompt:
                 raise ValueError("the decision point belongs to another task")
@@ -158,8 +195,8 @@ class Controlled(System):
             record = {"offset_usd": state.offset_usd, "batches": state.batches}
             (ctx.out_dir / "start.json").write_text(json.dumps(record))  # kept if the run fails
         with dsb.task_scope(ctx.search, task.seed, repair_citations=True):
-            loop = Loop(ctx, top, self.costs, p.actions, pages, p.sample)
-            docs = await loop.run(state, make_policy(p.policy), first, take)
+            loop = Loop(ctx, top, self.costs, p.actions, pages, p.sample, p.revise)
+            docs = await loop.run(state, make_policy(p.policy), first, take, writing)
         (ctx.out_dir / "state.json").write_text(state.to_json())
         report = dsb.to_report(state.draft or "", docs)
         return finalize(
@@ -169,6 +206,7 @@ class Controlled(System):
             status="ok",
             batches=state.batches,
             decisions=state.decisions,
+            revisions=list(state.revisions),
             queries=len(state.queries),
             screened=len(state.papers),
             relevant=len(state.relevant()),
@@ -196,6 +234,26 @@ def locate(task: Task, start: Start) -> Point:
     raise ValueError(f"{folder}: no decision point after {start.batches} batches")
 
 
+def locate_write(task: Task, start: Start) -> Point:
+    """The writing decision point `start` names: the task's in an earlier run after
+    `start.revision` revisions (writes.jsonl), or, where the run has no writing decisions, its
+    final state with the draft it submitted (revision 0 only)."""
+    folder = task_dir(paths.RUNS / start.run, task.bench, start.system, task)
+    rows = {r["url"]: r for r in read_jsonl(folder / "rows.jsonl")}
+    if (folder / "writes.jsonl").exists():
+        for record in read_jsonl(folder / "writes.jsonl"):
+            if len(record["state"]["revisions"]) == start.revision:
+                point = restore(record, rows, [])
+                return Point(point.state, [], {})
+        raise ValueError(f"{folder}: no writing decision after {start.revision} revisions")
+    if start.revision != 0:
+        raise ValueError(f"{folder}: no writes.jsonl, so only its submitted draft (revision 0)")
+    state = State.from_json((folder / "state.json").read_text())
+    if state.draft is None or not state.docs:
+        raise ValueError(f"{folder}: the run's final state has no draft")
+    return Point(state, [], {})
+
+
 class Loop:
     """One task's research loop over DS-base's components; runs inside `dsb.task_scope`."""
 
@@ -207,9 +265,12 @@ class Loop:
         actions: tuple[str, ...],
         pages: Pages,
         sample: int = 0,
+        revise: tuple[str, ...] = (),
     ) -> None:
-        """`pages`: search pages fetched before (a restored decision point's), free to re-read."""
+        """`pages`: search pages fetched before (a restored decision point's), free to re-read;
+        `revise`: the revisions offered at writing decisions (none: no writing decisions)."""
         self.ctx, self.top, self.costs, self.actions, self.sample = ctx, top, costs, actions, sample
+        self.revise = revise
         self.screen_cfg = dsb.build_configs(ctx, {"use_sem_topk": False})
         self.write_cfg = dsb.build_configs(ctx, {"use_sem_filter": False}, sample)
         self.agentic = importlib.import_module("deepscholar_base.search.agentic_search")
@@ -217,11 +278,12 @@ class Loop:
         self.hits: Pages = {}
         self.rows: dict[str, dict[str, Any]] = {}  # URL -> search row, as logged in rows.jsonl
         out = ctx.out_dir
-        self.decisions, self.rows_log, self.pages = (
-            out / f for f in ("decisions.jsonl", "rows.jsonl", "pages.jsonl")
+        self.decisions, self.rows_log, self.pages, self.writes = (
+            out / f for f in ("decisions.jsonl", "rows.jsonl", "pages.jsonl", "writes.jsonl")
         )
-        for path in (self.decisions, self.rows_log, self.pages):
+        for path in (self.decisions, self.rows_log, self.pages, self.writes):
             path.unlink(missing_ok=True)
+        self.decisions.touch()  # a writing branch makes no retrieval decision
         for (query, k), rows in pages.items():
             self.remember(query, k, rows)
 
@@ -231,12 +293,18 @@ class Loop:
         policy: Policy,
         first: list[Candidate] | None = None,
         take: str | None = None,
+        writing: bool = False,
     ) -> pd.DataFrame:
-        """Decide and search until `finish`, then write; returns the writer's documents. `first`:
-        the opening decision's candidates, as a snapshot saved them, so that step is not
-        prepared (nor paid for) again. `take`: the kind of candidate the opening decision
-        executes, without asking the policy."""
+        """Decide and search until `finish`, then write (and revise, where revisions are
+        offered); returns the writer's documents. `first`: the opening decision's candidates, as
+        a snapshot saved them, so that step is not prepared (nor paid for) again. `take`: the
+        kind of candidate the opening decision executes, without asking the policy. `writing`:
+        the state is a writing decision point, with its draft (no retrieval, no first draft)."""
         self.keep_rows([p.row for p in state.papers] + [r for c in first or () for r in c.rows])
+        if writing:
+            docs = self.documents(state)
+            await self.revisions(state, policy, docs, take)
+            return docs
         proposed = None if first is None else self.restored(state, first)
         while state.phase == "retrieval":
             self.sync(state)
@@ -275,7 +343,47 @@ class Loop:
         docs = self.documents(state)
         state.draft = await self.write(state.topic, docs)
         self.sync(state)
+        if self.revise:
+            await self.revisions(state, policy, docs, None)
         return docs
+
+    async def revisions(
+        self, state: State, policy: Policy, docs: pd.DataFrame, take: str | None
+    ) -> None:
+        """Writing decisions until `submit`: each between the affordable revisions offered and
+        `submit`, logged to writes.jsonl once executed."""
+        state.phase = "writing"
+        while True:
+            self.sync(state)
+            offered = write_legal(state, self.revise, self.costs)
+            point = snapshot(state, offered, len(self.hits))
+            before = state.spent_usd
+            forced, taken = len(offered) == 1, take is not None
+            if taken:
+                decision, take = Decision(taken_index(offered, take)), None
+            elif forced:
+                decision = Decision(0)
+            else:
+                decision = await policy.choose(self.ctx, state, offered)
+            self.sync(state)
+            control = state.spent_usd - before
+            choice = offered[decision.index]
+            overridden = choice.kind != SUBMIT and choice.cost_usd > state.remaining_usd
+            if overridden:  # the decision's own cost left no room for the revision: submit
+                choice = offered[-1]
+            state.decisions += 1
+            if choice.kind != SUBMIT:
+                state.drafts.append(state.draft or "")
+                state.revisions.append(choice.kind)
+                state.draft = await self.rewrite(state, choice.kind, docs)
+                self.sync(state)
+            executed = offered.index(choice)
+            self.record(
+                point, decision, executed, forced, overridden, control, state, taken, self.writes
+            )
+            if choice.kind == SUBMIT:
+                break
+        state.phase = "done"
 
     def sync(self, state: State) -> None:
         state.spent_usd = state.offset_usd + self.ctx.usage()["spent_usd"]
@@ -397,6 +505,17 @@ class Loop:
         """DS-base's intro writer (P10, no background)."""
         return await self.top.generate_intro_section(topic, docs, "", self.write_cfg)
 
+    async def rewrite(self, state: State, kind: str, docs: pd.DataFrame) -> str:
+        """One revision: DS-base's section writer with the draft as its existing content
+        (citations as numbers into `docs`, its own input form) and REVISE[kind], on the
+        `revise` stage."""
+        summary = importlib.import_module("deepscholar_base.utils.summary_generation")
+        existing = numbered(state.draft or "", state.docs)
+        lm = dsb.stage_lm(self.ctx, "revise", self.sample)
+        return await summary.generate_section_summary_with_citations(
+            state.topic, docs, REVISE[kind], existing, lm=lm
+        )
+
     # ------------------------------------------------------------------ logs
     def remember(self, query: str, k: int, rows: list[dict[str, Any]]) -> None:
         """Keep a fetched page, and log it (pages.jsonl) and its rows (rows.jsonl)."""
@@ -422,12 +541,13 @@ class Loop:
         control_usd: float,
         state: State,
         taken: bool = False,
+        log: Path | None = None,
     ) -> None:
         """A decision once executed: what the policy saw and asked for (`taken`: a branch's
         executed candidate, not asked), what ran, and the list spend before it (the snapshot's),
-        of the policy's own calls and after the action."""
+        of the policy's own calls and after the action; to decisions.jsonl unless `log`."""
         append(
-            self.decisions,
+            log or self.decisions,
             point
             | {
                 "requested": decision.index,

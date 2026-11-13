@@ -201,7 +201,7 @@ class FakeD1:
         self.forwards = 0
 
     def encode(self, state: Any, question: dict, render: dict | None = None) -> tuple[list, list]:
-        titles = state["relevant papers"] if isinstance(state, dict) else []
+        titles = state.get("relevant papers", []) if isinstance(state, dict) else []
         return [0] * (100 + 5000 * len(titles)), []
 
     def probabilities(self, items: list, render: dict | None = None) -> list[list[float]]:

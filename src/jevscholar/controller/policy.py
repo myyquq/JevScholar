@@ -1,7 +1,8 @@
 """Who picks the controlled loop's next action among the legal candidates.
 
-- `Fixed`: a rule (retrieval kinds in rotation for a number of batches, then finish), the
-  ablation without any learned or prompted choice;
+- `Fixed`: a rule (retrieval kinds in rotation for a number of batches, then finish; at writing
+  decisions its `revise` sequence, then submit), the ablation without any learned or prompted
+  choice;
 - `Prompted`: the executor answers d1's own prompt (with short rules of thumb), the ablation
   without the decision model; its calls are billed like any executor call (stage "choose");
 - `D1Policy`: the d1-3B decision model behind `jev controller serve`, reading what its `Profile`
@@ -26,11 +27,17 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol
 
 import requests
-from pydantic import Field, PrivateAttr, TypeAdapter
+from pydantic import (
+    Field,
+    PrivateAttr,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    model_serializer,
+)
 
 from jevscholar.controller.d1 import user_turn
 from jevscholar.controller.prompt import LEVELS, Profile
-from jevscholar.controller.state import FINISH, MAX_BATCHES, Candidate, State
+from jevscholar.controller.state import FINISH, MAX_BATCHES, SUBMIT, Candidate, State
 from jevscholar.search.client import Meter
 from jevscholar.systems import chat
 from jevscholar.types import Strict, TaskContext
@@ -62,11 +69,26 @@ class Fixed(Strict):
     kind: Literal["fixed"] = "fixed"
     retrieval: tuple[Literal["abstract", "explore", "deepen"], ...] = ("abstract", "explore")
     batches: int = MAX_BATCHES  # finish after this many batches
+    revise: tuple[Literal["ground", "expand"], ...] = ()  # the revisions to make, then submit
+
+    @model_serializer(mode="wrap")
+    def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Without revisions, the fields the rule had before writing decisions existed: its
+        identity (and so every cell made with it) stays the same."""
+        out = handler(self)
+        if not self.revise:
+            out.pop("revise", None)
+        return out
 
     async def choose(self, ctx: TaskContext, state: State, candidates: list[Candidate]) -> Decision:
         """Batch i wants retrieval[i % len], else the next kind in rotation, else `finish`; when
-        none of these is legal (no relevant paper to finish with yet), the first candidate."""
+        none of these is legal (no relevant paper to finish with yet), the first candidate. At a
+        writing decision: the next revision of `revise` if offered, else `submit`."""
         kinds = [c.kind for c in candidates]
+        if kinds[-1] == SUBMIT:
+            done = len(state.revisions)
+            want = self.revise[done] if done < len(self.revise) else SUBMIT
+            return Decision(kinds.index(want) if want in kinds else len(kinds) - 1)
         n, i = len(self.retrieval), state.batches
         want = [self.retrieval[(i + j) % n] for j in range(n)] if i < self.batches else []
         for kind in [*want, FINISH]:

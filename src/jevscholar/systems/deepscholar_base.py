@@ -295,6 +295,24 @@ def build_configs(
     return Configs(**fields, **lms, logger=ctx.log)
 
 
+def stage_lm(ctx: TaskContext, stage: str, sample: int = 0) -> Any:
+    """An LM for an extra stage of DS-base's components (the controlled loop's revisions), with
+    the vendored sampling settings, on the stage's tagged gateway URL (`<stage>~<sample>` for an
+    independent sample)."""
+    from lotus.models import LM
+
+    y = vendored_yaml()
+    return LM(
+        model=ctx.executor,
+        temperature=y["lm"]["temperature"],
+        max_tokens=y["lm"]["max_tokens"],
+        custom_llm_provider="openai",
+        api_base=ctx.base_url(f"{stage}~{sample}" if sample else stage),
+        timeout=CLIENT_TIMEOUT_S,
+        max_retries=0,
+    )
+
+
 # --------------------------------------------------------------------------- native -> Report
 HREF = r"https?://(?:[^()\s]|\([^()\s]*\))+"  # balanced parentheses, e.g. Wikipedia titles
 TOKEN = re.compile(
