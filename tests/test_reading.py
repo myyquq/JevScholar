@@ -74,6 +74,17 @@ def test_fetch_keeps_texts_notes_failures_and_skips_what_it_has(cache, monkeypat
     assert fulltext.fetch(urls, delay_s=0) == {"cached": 3, "not_arxiv": 1} and len(calls) == 3
 
 
+def test_extracted_text_drops_what_utf8_cannot_hold(monkeypatch):
+    import pypdf
+
+    class Page:
+        def extract_text(self):
+            return "x \ud835 y use-\nful"
+
+    monkeypatch.setattr(pypdf, "PdfReader", lambda f: type("R", (), {"pages": [Page()]}))
+    assert fulltext.extract(b"%PDF") == "x  y useful"
+
+
 def test_a_runs_documents_are_its_tasks_writer_documents(tmp_path):
     for task, docs in (("a", ["u1", "u2"]), ("b", ["u2", "u3"])):
         folder = tmp_path / "deepscholar" / "ctl" / "tasks" / task

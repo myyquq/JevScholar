@@ -62,10 +62,13 @@ def excerpt(url: str, chars: int = EXCERPT_CHARS) -> str | None:
 
 
 def extract(pdf: bytes) -> str:
-    """A PDF's text, line-broken words joined."""
+    """A PDF's text, line-broken words joined; characters UTF-8 cannot hold (lone surrogates
+    from math fonts) dropped."""
     from pypdf import PdfReader
 
+    logging.getLogger("pypdf").setLevel(logging.ERROR)  # font warnings on every page
     text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf)).pages)
+    text = text.encode("utf-8", "ignore").decode("utf-8")
     return re.sub(r"(\w)-\n(\w)", r"\1\2", text)
 
 
