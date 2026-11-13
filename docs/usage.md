@@ -75,6 +75,8 @@ uv run jev controller compare RUN:SYSTEM ...              # paired retrieval ret
 sbatch scripts/val_compare.sh          # d1-sft vs d1-rl on val: regret, episodes, comparison
 sbatch scripts/june_dev.sh             # fixed (3-6 batches), d1, d1-sft, d1-rl on June dev
 uv run jev controller frontier RUN     # the d1 controllers against the fixed rule at matched cost
+uv run jev controller headroom RUN [--metric M ...]   # a per-task stopping oracle's gain
+                                       # over the fixed budgets at matched cost (cross-fitted)
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]

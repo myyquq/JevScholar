@@ -557,6 +557,19 @@ def controller_frontier(
     typer.echo(frontier_report(_run_dir(run)))
 
 
+@controller_app.command("headroom")
+def controller_headroom(
+    run: Annotated[str, typer.Argument(help="A reported run with fixed-rule budgets.")],
+    metric: Annotated[
+        list[str] | None, typer.Option(help="Metrics (default: utility, nugget_coverage).")
+    ] = None,
+) -> None:
+    """What a per-task stopping oracle could gain over the fixed rule at matched cost."""
+    from jevscholar.controller.headroom import headroom_report
+
+    typer.echo(headroom_report(_run_dir(run), metric or ["utility", "nugget_coverage"]))
+
+
 @controller_app.command("sanity-data")
 def controller_sanity_data(
     out: Annotated[Path, typer.Argument(help="Directory for train.jsonl and dev.jsonl.")],

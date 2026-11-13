@@ -145,6 +145,12 @@ gets less money) and reports its distance to the curve interpolated at its cost.
 proposal's success test: better quality than the tuned fixed workflow at the same total cost,
 without losing citation reliability.
 
+**Stopping headroom.** At a fixed number of batches the rule spends alike on every task; a
+controller can beat it at the same mean cost only by spending where search pays.
+`jev controller headroom RUN` bounds that gain: a per-task oracle over the fixed budgets, at no
+more mean cost than each uniform budget, picks on one writer sample and is scored on the other
+(both ways), so it cannot profit from writer noise.
+
 **Cost before test.** An action-level forecast from the dev runs' bills, then a funded matrix
 frozen before generation, run in matched task chunks across arms. Six arms with two samples on
 90 tasks are 1,080 reports; the campaign has about $12.9 left of its $45 cap.
