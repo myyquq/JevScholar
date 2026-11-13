@@ -582,6 +582,28 @@ def controller_headroom(
     typer.echo(headroom_report(_run_dir(run), metric or ["utility", "nugget_coverage"]))
 
 
+@controller_app.command("screen-data")
+def controller_screen_data(
+    out: Annotated[Path, typer.Argument(help="Directory for train.jsonl, dev.jsonl and metas.")],
+) -> None:
+    """d1 relevance-screening examples from every run's DeepSeek screening verdicts."""
+    from jevscholar.controller.screen import screen_data
+
+    typer.echo(json.dumps(screen_data(out), indent=2))
+
+
+@controller_app.command("screen-eval")
+def controller_screen_eval(
+    data: Annotated[Path, typer.Argument(help="screen-data examples (train.jsonl or dev.jsonl).")],
+    out: Annotated[Path, typer.Option(help="Per-example P(relevant), JSONL.")],
+    adapter: Annotated[Path | None, typer.Option(help="A trained adapter (default: none).")] = None,
+) -> None:
+    """d1 as the relevance screener against DeepSeek and the real citations (.venv-train)."""
+    from jevscholar.controller.screen import score
+
+    typer.echo(score(data, out, adapter))
+
+
 @controller_app.command("sanity-data")
 def controller_sanity_data(
     out: Annotated[Path, typer.Argument(help="Directory for train.jsonl and dev.jsonl.")],

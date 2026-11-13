@@ -80,6 +80,9 @@ uv run jev controller headroom RUN [--metric M ...]   # a per-task stopping orac
                                        # over the fixed budgets at matched cost (cross-fitted)
 sbatch scripts/write_pilot.sh          # writing decisions: revisions of the fixed rule's drafts (CPU)
 sbatch scripts/read_pilot.sh           # reading: full-text fetch, then revisions from it (CPU)
+sbatch scripts/screen_eval.sh          # d1 as the relevance screener, zero-shot (GPU, no API)
+uv run jev controller screen-data DIR  # d1 screening examples from the runs' DeepSeek verdicts
+scripts/train_env.sh jev controller screen-eval DATA.jsonl --out P.jsonl [--adapter DIR]
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
@@ -228,6 +231,7 @@ older format that `jev controller trajectories` does not read.
 | `eval-dev-trained` | the fixed rule at 3 to 6 batches, d1, d1-sft and d1-rl on June dev: the choice of d1 and the matched-cost comparison (docs/06) |
 | `write-pilot-train`, `write-pilot-val` | the fixed rule's drafts submitted, grounded, expanded, or expanded then grounded (docs/06: writing decisions) |
 | `read-pilot-train`, `read-pilot-val` | the fixed rule's drafts submitted, expanded, read or redrafted from the full text (docs/06: reading) |
+| `screen/<name>-{dev,train}` | d1 as the relevance screener against DeepSeek's verdicts and the real citations (docs/06: screening) |
 | `controller/sanity`, `controller/sweep-1` | the LoRA training-loop check and the offline prompt search |
 | `branches-<RUN>-b<batches>-<kind>` | counterfactual branches of a train or val run's decision points (docs/06) |
 | `controller/sft` | d1-sft: the SFT warm start (docs/06) |

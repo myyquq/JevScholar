@@ -191,6 +191,36 @@ oracle over the four choices gains U +.010 [−.013, .032] at read's cost (train
 retrieval and writing pilots: no decision this loop can make moves the judged scores beyond the
 writer's sample-to-sample noise at matched cost; only more search budget does (the fixed curve).
 
+### Screening
+
+**Why.** Every decision so far replaced the fixed rule, which costs nothing, so d1 could win only
+by deciding better, and the pilots found nothing to gain there. SearchJev's System-1 model wins
+the other way: it takes over the large model's short judgments (relevance above all), and the
+time and money saved go elsewhere. Here the short judgment is DS-base's CoT sem_filter, one
+DeepSeek call per screened paper: 59% of the fixed rule's spend at 3 batches ($.013 of $.022 a
+task on June dev), 78% at 6 ($.037 of $.047). A d1 call is priced at $0.00002 per 1k prompt
+tokens, about 50 times less. If d1 screened as well as DeepSeek, the 6-batch rule (U .399, nugget
+.242) would cost about what the 3-batch rule does now (U .378, nugget .204): the matched-cost gain
+the proposal asks for.
+
+**Labels.** The runs logged 4,924 DeepSeek verdicts on (task, paper) pairs over 63 tasks (53%
+relevant). DeepSeek keeps 94% of the screened papers the target paper really cites, and 52% of the
+others: losing cited papers is what a cheaper screener must not do.
+
+**Zero-shot test** (`sbatch scripts/screen_eval.sh`, one short GPU job, no API).
+`jev controller screen-data` turns the verdicts into d1 examples (`controller/screen.py`: the task,
+the paper's title and abstract, sem_filter's own question as `relevant` / `not relevant`, target
+DeepSeek's verdict at 0.9); train and val tasks train, June dev tasks evaluate, test tasks never
+appear. `jev controller screen-eval` scores d1 (both option orders averaged: the codes are
+positional) against DeepSeek and the real citations, alone at keep thresholds and as a cascade
+(d1 decides where its top probability reaches delta, DeepSeek decides the rest; the share d1
+decides is the share of sem_filter's spend saved). Report: `runs/screen/zero-shot-{dev,train}.md`.
+Next, depending on it: an SFT adapter on the train examples (`jev controller train`), then the
+screener in the loop and the fixed rule at more batches against the 3-batch rule at matched cost
+on June dev.
+
+**Versions.** On branch `d1-screen` (from `read-action`). Nothing in the loop changes yet.
+
 **Versions.** On branch `read-action` (from `write-actions`). The reading revisions are offered
 only where a cell lists them in `revise`, so every earlier cell keeps its identity (the pins in
 `tests/test_writing.py`); `tests/test_reading.py` covers the cache and the loop offline.

@@ -21,6 +21,7 @@ its result once it is reported. Results: DeepSeek-judged, paired against the nam
 | `eval-dev-trained` | 11-10 - 11-11 | `evaluate.yaml` / `dev-trained` | ed7e8e9+, 6434843+ (june-dev-compare) | fixed (3-6 batches), d1, d1-sft, d1-rl on 20 June dev tasks; `frontier.md` | fixed U .378 $.021; d1 .379 $.050; d1-sft .377 $.031; d1-rl .372 $.043 (cite_p −.090, p .016). Fixed b4/b5/b6 U .382/.396/.399; every d1 on or below the fixed curve at matched cost; stopping headroom U +.011 [−.036, .057] (b4) |
 | `write-pilot-train`, `write-pilot-val` | 11-12 - 11-13 | `writing.yaml` / `train`, `val` | 3f41713+ (write-actions) | the fixed rule's drafts submitted, grounded, expanded, expanded then grounded | vs submit, train U: ground −.011, expand −.003, both −.007 (all across 0); per-task oracle U .436 vs .435 |
 | `read-pilot-train`, `read-pilot-val` | 11-13 | `reading.yaml` / `train`, `val` | d374575+ (read-action) | the drafts submitted, expanded, read (revised from full text), redrafted from it; 763/764 PDFs | vs submit, train U: read −.003, redraft +.005, expand −.003 (all across 0); val redraft cite_p −.107; per-task oracle +.010 [−.013, .032] |
+| `screen/zero-shot-{dev,train}` | pending | `scripts/screen_eval.sh` (no run manifest: an offline scoring) | d1-screen | d1-3B as released as the relevance screener on 4,924 DeepSeek verdicts | pending |
 
 Earlier runs named in docs/usage.md (`p-dev`, `p-dev2`, `ctl-val`, `eval-dev`, `eval-dev2`,
 `controller/sanity`, `controller/sweep-1`) are not in this checkout's `runs/`; docs/05 holds
