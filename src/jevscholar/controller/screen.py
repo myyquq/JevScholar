@@ -6,7 +6,8 @@ DeepSeek's CoT sem_filter judged, with its verdict) into d1 examples: the state 
 the paper's title and abstract (the abstract is what sem_filter reads), the question sem_filter's
 own, as a choice between `relevant` and `not relevant`; the target is DeepSeek's verdict at
 CONFIDENCE (a soft label: the teacher is not ground truth). Each (task, paper) pair once. Tasks
-split as the benchmark's splits: train and val tasks train, dev tasks evaluate. Every example's
+split as the benchmark's splits (PARTS): train tasks train, val tasks choose the epoch, June dev
+tasks are the held-out check; test tasks never appear. Every example's
 meta (task, split, URL, DeepSeek's verdict, whether the target paper cites it) is written beside
 it in the same order.
 
@@ -44,8 +45,7 @@ QUESTION = {
         IRRELEVANT: "the article is not relevant to them",
     },
 }
-TRAIN_SPLITS = ("train", "val")
-DEV_SPLITS = ("dev",)
+PARTS = ("train", "val", "dev")  # the benchmark splits used, each its own file
 THRESHOLDS = (0.1, 0.2, 0.3, 0.5, 0.7)
 DELTAS = (0.6, 0.7, 0.8, 0.9, 0.95)
 
@@ -95,14 +95,14 @@ def verdicts(runs: Path) -> list[dict[str, Any]]:
 
 
 def screen_data(out: Path, runs: Path | None = None, raw: Path | None = None) -> dict[str, int]:
-    """train.jsonl / dev.jsonl of d1 examples and their .meta.jsonl; returns the counts."""
+    """<part>.jsonl of d1 examples and <part>.meta.jsonl per PARTS; returns the counts."""
     split_of, cites = splits(), cited(raw or paths.DATA_RAW / "deepscholar")
-    parts: dict[str, list[tuple[Example, dict]]] = {"train": [], "dev": []}
+    parts: dict[str, list[tuple[Example, dict]]] = {part: [] for part in PARTS}
     for v in verdicts(runs or paths.RUNS):
         split = split_of.get(v["task"])
-        part = "train" if split in TRAIN_SPLITS else "dev" if split in DEV_SPLITS else None
-        if part is None:  # never a test task's verdict
+        if split not in parts:  # never a test task's verdict
             continue
+        part = split
         meta = {
             "task": v["task"],
             "split": split,

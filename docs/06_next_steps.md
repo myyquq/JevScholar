@@ -210,14 +210,24 @@ others: losing cited papers is what a cheaper screener must not do.
 **Zero-shot test** (`sbatch scripts/screen_eval.sh`, one short GPU job, no API).
 `jev controller screen-data` turns the verdicts into d1 examples (`controller/screen.py`: the task,
 the paper's title and abstract, sem_filter's own question as `relevant` / `not relevant`, target
-DeepSeek's verdict at 0.9); train and val tasks train, June dev tasks evaluate, test tasks never
-appear. `jev controller screen-eval` scores d1 (both option orders averaged: the codes are
+DeepSeek's verdict at 0.9), one file per split: train, val and June dev tasks (test tasks never
+appear). `jev controller screen-eval` scores d1 (both option orders averaged: the codes are
 positional) against DeepSeek and the real citations, alone at keep thresholds and as a cascade
 (d1 decides where its top probability reaches delta, DeepSeek decides the rest; the share d1
 decides is the share of sem_filter's spend saved). Report: `runs/screen/zero-shot-{dev,train}.md`.
-Next, depending on it: an SFT adapter on the train examples (`jev controller train`), then the
-screener in the loop and the fixed rule at more batches against the 3-batch rule at matched cost
-on June dev.
+
+**Zero-shot result** (June dev, 1,781 verdicts, 54 of cited papers). d1-3B as released ranks
+papers only weakly (AUC .72 against DeepSeek's verdicts, .77 for cited against not) and puts
+P(relevant) low for almost every paper (median .23), so its confident answers are mostly "not
+relevant" and wrong: as a cascade at delta .8 it decides 37% and keeps 83% of the cited papers
+(DeepSeek 91%). Its best plain threshold (keep at P >= .2) keeps 63% of the papers and 93% of
+the cited, agreeing with DeepSeek on 68%. Not usable untrained.
+
+**SFT** (`sbatch scripts/screen_sft.sh`, recipe `screen` in configs/training.yaml): LoRA on the
+train tasks' 3,143 verdicts, the epoch chosen on the val tasks' (runs/controller/screen), then
+scored on the held-out June dev tasks (runs/screen/sft-dev.md) against zero-shot-dev.md. If it
+reaches DeepSeek's cited recall while deciding most papers, the screener goes into the loop, and
+the fixed rule at more batches runs against the 3-batch rule at matched cost on June dev.
 
 **Versions.** On branch `d1-screen` (from `read-action`). Nothing in the loop changes yet.
 

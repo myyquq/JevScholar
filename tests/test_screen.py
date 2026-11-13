@@ -21,7 +21,8 @@ def paper(pid: str, relevant: bool | None) -> dict:
 
 @pytest.fixture
 def logged(tmp_path, monkeypatch) -> tuple[Path, Path]:
-    """Two runs over a train, a dev and a test task; the train task's papers seen twice."""
+    """Two runs over a train, a dev and a test task; the train task's papers seen twice (no val
+    task: its files are empty)."""
     runs, raw = tmp_path / "runs", tmp_path / "raw"
     states = {
         ("r1", "2501.00001v1"): [paper("1111.0001", True), paper("1111.0002", False)],
@@ -55,6 +56,9 @@ def test_every_verdict_once_test_tasks_never(logged, tmp_path):
         "dev": 1,
         "dev_relevant": 0,
         "dev_cited": 1,
+        "val": 0,
+        "val_relevant": 0,
+        "val_cited": 0,
     }
     train = read_examples(tmp_path / "out" / "train.jsonl")
     metas = read_jsonl(tmp_path / "out" / "train.meta.jsonl")
@@ -117,3 +121,12 @@ def test_d1_reads_the_paper_and_the_question():
     text = user_turn(e.state, e.question)
     assert "Graph agents" in text and "We plan." in text and screen.INSTRUCTIONS in text
     assert "relevant" in text and "not relevant" in text
+
+
+def test_the_screen_recipe_trains_on_train_and_chooses_on_val():
+    from jevscholar.controller.d1 import load_recipe
+    from jevscholar.paths import CONFIGS
+
+    cfg = load_recipe(CONFIGS / "training.yaml", "screen")
+    assert (cfg.train.name, cfg.dev.name) == ("train.jsonl", "val.jsonl")
+    assert cfg.train.parent.name == "screen" and cfg.out.name == "screen"

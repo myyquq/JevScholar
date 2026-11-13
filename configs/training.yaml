@@ -17,3 +17,11 @@ sft:  # the supervised warm start on counterfactual branch labels (docs/06)
   lr: 2.0e-4
   batch_tokens: 8192
   accum: 4
+screen:  # d1 as the relevance screener on DeepSeek's verdicts (docs/06: screening)
+  train: data/derived/controller/screen/train.jsonl  # `jev controller screen-data`: train tasks
+  dev: data/derived/controller/screen/val.jsonl  # val tasks choose the epoch; June dev is held out
+  out: runs/controller/screen
+  epochs: 2
+  lr: 2.0e-4
+  batch_tokens: 8192
+  accum: 4
