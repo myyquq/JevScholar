@@ -24,6 +24,18 @@ systems:  # the trained d1 (docs/06), each adapter on its own server, named by i
   ctl_fixed_b4: {extends: ctl_fixed, policy: {batches: 4}}
   ctl_fixed_b5: {extends: ctl_fixed, policy: {batches: 5}}
   ctl_fixed_b6: {extends: ctl_fixed, policy: {batches: 6}}
+  # d1 as the relevance screener (docs/06: screening): runs/controller/screen/adapter, at the
+  # delta chosen on val; the money it saves buys more batches (scripts/screen_dev.sh)
+  ctl_screen:
+    extends: ctl_fixed
+    screener:
+      url: http://127.0.0.1:9943
+      adapter: 0ec04682ed2c880a34e279f24df0d121671629a0a0d7e8274425fa4fddfb502e
+      delta: 0.7
+  ctl_screen_b4: {extends: ctl_screen, policy: {batches: 4}}
+  ctl_screen_b5: {extends: ctl_screen, policy: {batches: 5}}
+  ctl_screen_b6: {extends: ctl_screen, policy: {batches: 6}}
+  ctl_screen_b8: {extends: ctl_screen, max_batches: 8, policy: {batches: 8}}
 
 variants:
   dev: {benchmarks: {deepscholar: {split: dev, limit: 20}}}     # June dev
@@ -34,6 +46,13 @@ variants:
         limit: 20
         systems: [ctl_fixed, ctl_d1, ctl_d1_sft, ctl_d1_rl,
                   ctl_fixed_b4, ctl_fixed_b5, ctl_fixed_b6]
+  dev-screen:  # June dev: the screened fixed rule against the fixed curve; scripts/screen_dev.sh
+    benchmarks:
+      deepscholar:
+        split: dev
+        limit: 20
+        systems: [ctl_fixed, ctl_fixed_b4, ctl_fixed_b5, ctl_fixed_b6,
+                  ctl_screen, ctl_screen_b4, ctl_screen_b5, ctl_screen_b6, ctl_screen_b8]
   dev2: {benchmarks: {deepscholar: {split: dev2, limit: 20}}}   # Nov dev2
   test:  # the held-out tasks; the trained controllers join once frozen
     budget: {run_usd: 15.0, judge_run_usd: 5.0}

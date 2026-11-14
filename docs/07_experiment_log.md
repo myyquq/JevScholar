@@ -22,7 +22,8 @@ its result once it is reported. Results: DeepSeek-judged, paired against the nam
 | `write-pilot-train`, `write-pilot-val` | 11-12 - 11-13 | `writing.yaml` / `train`, `val` | 3f41713+ (write-actions) | the fixed rule's drafts submitted, grounded, expanded, expanded then grounded | vs submit, train U: ground −.011, expand −.003, both −.007 (all across 0); per-task oracle U .436 vs .435 |
 | `read-pilot-train`, `read-pilot-val` | 11-13 | `reading.yaml` / `train`, `val` | d374575+ (read-action) | the drafts submitted, expanded, read (revised from full text), redrafted from it; 763/764 PDFs | vs submit, train U: read −.003, redraft +.005, expand −.003 (all across 0); val redraft cite_p −.107; per-task oracle +.010 [−.013, .032] |
 | `screen/zero-shot-{dev,train}` | 11-13 | `scripts/screen_eval.sh` (job 33326653; an offline scoring, no run manifest) | 90be206 (d1-screen) | d1-3B as released as the relevance screener on DeepSeek's verdicts (dev 1,781, train 3,143) | not usable untrained: AUC .72 vs DeepSeek (dev); best threshold P >= .2 agrees 68%; cascade at delta .8 decides 37% (dev) / 28% (train) but keeps 83% / 94% of cited papers (DeepSeek 91% / 95%) |
-| `controller/screen`, `screen/sft-{dev,val}` | pending | `scripts/screen_sft.sh`, recipe `screen` | 8c3189c (d1-screen) | d1 LoRA-trained on the train tasks' verdicts, epoch chosen on val, scored on June dev | pending |
+| `controller/screen`, `screen/sft-{dev,val}` | 11-13 | `scripts/screen_sft.sh` (job 33344984), recipe `screen` | 8bec12c (d1-screen) | d1 LoRA-trained on the train tasks' verdicts (3,143), epoch chosen on val, scored on June dev | usable: AUC vs DeepSeek .84 (dev); cascade at delta .7 (chosen on val: decides 68%, cited recall .974 = DeepSeek) decides 64% on dev with cited recall .944 (DeepSeek .907), kept .546 (.537) |
+| `eval-dev-screen` | pending | `evaluate.yaml` / `dev-screen`, `scripts/screen_dev.sh` | (d1-screen) | the fixed rule at 3-6 batches with and without the d1 screener (+ 8 batches screened) on 20 June dev tasks; `frontier.md` | pending |
 
 Earlier runs named in docs/usage.md (`p-dev`, `p-dev2`, `ctl-val`, `eval-dev`, `eval-dev2`,
 `controller/sanity`, `controller/sweep-1`) are not in this checkout's `runs/`; docs/05 holds
@@ -34,6 +35,7 @@ their results.
 |---|---|---|---|
 | d1-sft | `runs/controller/sft/adapter` | dabf7875e4091468400e50fa90a67c54d2dbce7969ac73d97df05280d03c45b6 | `ctl_d1_sft` (:9941) |
 | d1-rl | `runs/controller/rl/first/r1/adapter` | 2fa87a6904389d5d0503cd46f5aaf0fe91107a7231ce753e4c30fa5256f79807 | `ctl_d1_rl` (:9942) |
+| d1-screen | `runs/controller/screen/adapter` | 0ec04682ed2c880a34e279f24df0d121671629a0a0d7e8274425fa4fddfb502e | `ctl_screen*` screener (:9943) |
 
 ## Reading a run's version
 

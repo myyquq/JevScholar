@@ -16,6 +16,10 @@ citations (recovered_citations.csv; DeepSeek keeps about 94% of the cited papers
 each keep threshold (keep when P(relevant) >= t), and as a cascade, where d1 decides when its top
 probability reaches `delta` and DeepSeek decides the rest: the share d1 decides is the share of
 sem_filter's spend saved.
+
+`served_probabilities` is the same scoring against a served adapter, for the controlled loop's
+`screener` (systems/controlled.py): d1 decides a paper where it is sure at the screener's delta,
+DeepSeek's sem_filter the rest.
 """
 
 from __future__ import annotations
@@ -176,3 +180,37 @@ def score(examples: Path, probs_out: Path, adapter: Path | None = None) -> str:
             probs[i] += dist[names.index(RELEVANT)] / 2
     write_jsonl(probs_out, ({**m, "p_relevant": p} for m, p in zip(metas, probs, strict=True)))
     return screen_report(probs, metas)
+
+
+# --------------------------------------------------------------------------- in the loop
+def served_probabilities(
+    url: str, adapter: str | None, topic: str, rows: Sequence[dict[str, Any]], meter: Any
+) -> list[float] | None:
+    """P(relevant) per row from the d1 server at `url` (`jev controller serve`), both option
+    orders averaged as in `score`; one request per batch, admitted and charged to `meter` as the
+    `d1_choice` tool per started thousand prompt tokens. None when the server rejects a prompt
+    as too long (nothing is charged then: DeepSeek screens the batch)."""
+    import math
+
+    import requests
+
+    served = requests.get(f"{url}/info", timeout=30).json()["adapter"]
+    if served != adapter:
+        raise RuntimeError(f"d1 screener server has adapter {served}, the system wants {adapter}")
+    from jevscholar.controller.d1 import reorder
+
+    orders = [reorder(QUESTION, order) for order in ((0, 1), (1, 0))]
+    body = {"requests": [{"state": state(topic, r), "questions": orders} for r in rows]}
+    meter.admit("d1_choice")
+    r = requests.post(f"{url}/choice", json=body, timeout=600)
+    if r.status_code == 413:
+        return None
+    r.raise_for_status()
+    out = r.json()
+    meta = {"tokens": out["tokens"], "adapter": adapter, "screen": len(rows)}
+    meter.charge("d1_choice", n=math.ceil(out["tokens"] / 1000), meta=meta)
+    where = [list(q["criteria"]).index(RELEVANT) for q in orders]
+    return [
+        sum(d[i] for i, d in zip(where, answers, strict=True)) / 2
+        for answers in out["probabilities"]
+    ]

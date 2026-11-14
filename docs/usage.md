@@ -82,6 +82,7 @@ sbatch scripts/write_pilot.sh          # writing decisions: revisions of the fix
 sbatch scripts/read_pilot.sh           # reading: full-text fetch, then revisions from it (CPU)
 sbatch scripts/screen_eval.sh          # d1 as the relevance screener, zero-shot (GPU, no API)
 sbatch scripts/screen_sft.sh           # d1 trained as the relevance screener, scored on June dev (GPU)
+sbatch scripts/screen_dev.sh           # the fixed rule with the d1 screener vs its curve on June dev (GPU + DeepSeek)
 uv run jev controller screen-data DIR  # d1 screening examples from the runs' DeepSeek verdicts
 scripts/train_env.sh jev controller screen-eval DATA.jsonl --out P.jsonl [--adapter DIR]
 uv run jev controller sanity-data DIR                     # the training-loop check's data

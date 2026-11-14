@@ -41,10 +41,18 @@ the local cache (search/fulltext.py; fetched beforehand, never during a run) bes
 for that and every later revision: `read` revises the draft for coverage from them, `redraft` is
 DS-base's intro writer again from them, without the draft. A reading revision with no excerpt in
 the cache for any document fails the task. The judges still read each source's abstract.
+
+With a `screener` (none by default: the cell then is what it was before), d1 trained as the
+relevance screener (controller/screen.py, docs/06) screens each chosen search's new papers first,
+one request per batch charged as the `d1_choice` tool: a paper whose P(relevant) or P(not
+relevant) reaches the screener's `delta` is decided by d1, the others by DS-base's sem_filter as
+above (the same per-paper requests, so their verdicts replay). Every paper's P(relevant) and who
+decided it are appended to screens.jsonl.
 """
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import re
@@ -61,6 +69,7 @@ from jevscholar import paths
 from jevscholar.artifacts import task_dir
 from jevscholar.controller.policy import Decision, Policy, make_policy
 from jevscholar.controller.prompt import label
+from jevscholar.controller.screen import served_probabilities
 from jevscholar.controller.state import (
     ABSTRACT_K,
     FINISH,
@@ -90,6 +99,7 @@ from jevscholar.controller.state import (
 )
 from jevscholar.render import finalize
 from jevscholar.search import fulltext
+from jevscholar.search.client import Meter
 from jevscholar.systems import chat
 from jevscholar.systems import deepscholar_base as dsb
 from jevscholar.types import Report, Strict, System, Task, TaskContext
@@ -156,6 +166,16 @@ class Start(Strict):
         return out
 
 
+class Screener(Strict):
+    """d1 as the relevance screener: the server (`jev controller serve --adapter`) and the
+    adapter's sha256 it must report; d1 decides a paper where its top probability reaches
+    `delta` (chosen on the val tasks: docs/06)."""
+
+    url: str = "http://127.0.0.1:9943"
+    adapter: str | None
+    delta: float = 0.7
+
+
 class Controlled(System):
     version = "2"  # retrieval decisions only; d1's prompt as in controller/prompt.py
 
@@ -168,6 +188,7 @@ class Controlled(System):
         start: Start | None = None
         sample: int = 0  # > 0: an independent writer sample
         revise: tuple[Revision, ...] = ()  # revisions offered after drafting
+        screener: Screener | None = None  # d1 screens first (None: DeepSeek screens all)
 
         @model_serializer(mode="wrap")
         def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -175,6 +196,8 @@ class Controlled(System):
             out = handler(self)
             if not self.revise:
                 out.pop("revise", None)
+            if self.screener is None:
+                out.pop("screener", None)
             return out
 
     def __init__(self, params: dict[str, Any]) -> None:
@@ -189,7 +212,10 @@ class Controlled(System):
         for part in ("first", "then"):  # a FirstThen's parts (no other policy has them)
             if isinstance(policy.get(part), dict):
                 policy[part].pop("url", None)
-        return super().identity() | {"policy": policy}
+        identity = super().identity() | {"policy": policy}
+        if isinstance(identity["params"].get("screener"), dict):
+            identity["params"]["screener"].pop("url", None)
+        return identity
 
     async def run(self, ctx: TaskContext) -> Report:
         """Research and write the task, from the `start` point if there is one; the spend that
@@ -211,7 +237,7 @@ class Controlled(System):
             record = {"offset_usd": state.offset_usd, "batches": state.batches}
             (ctx.out_dir / "start.json").write_text(json.dumps(record))  # kept if the run fails
         with dsb.task_scope(ctx.search, task.seed, repair_citations=True):
-            loop = Loop(ctx, top, self.costs, p.actions, pages, p.sample, p.revise)
+            loop = Loop(ctx, top, self.costs, p.actions, pages, p.sample, p.revise, p.screener)
             docs = await loop.run(state, make_policy(p.policy), first, take, writing)
         (ctx.out_dir / "state.json").write_text(state.to_json())
         report = dsb.to_report(state.draft or "", docs)
@@ -229,6 +255,7 @@ class Controlled(System):
             spent_usd=state.spent_usd,
             offset_usd=state.offset_usd,
             read_docs=loop.read_docs,
+            **({"d1_screened": loop.d1_screened} if p.screener else {}),
         )
 
 
@@ -283,12 +310,14 @@ class Loop:
         pages: Pages,
         sample: int = 0,
         revise: tuple[str, ...] = (),
+        screener: Screener | None = None,
     ) -> None:
         """`pages`: search pages fetched before (a restored decision point's), free to re-read;
         `revise`: the revisions offered at writing decisions (none: no writing decisions)."""
         self.ctx, self.top, self.costs, self.actions, self.sample = ctx, top, costs, actions, sample
         self.revise = revise
         self.read_docs = 0  # documents the writer read the full text of (reading revisions)
+        self.screener, self.d1_screened = screener, 0  # papers d1 decided
         self.screen_cfg = dsb.build_configs(ctx, {"use_sem_topk": False})
         self.write_cfg = dsb.build_configs(ctx, {"use_sem_filter": False}, sample)
         self.agentic = importlib.import_module("deepscholar_base.search.agentic_search")
@@ -296,6 +325,8 @@ class Loop:
         self.hits: Pages = {}
         self.rows: dict[str, dict[str, Any]] = {}  # URL -> search row, as logged in rows.jsonl
         out = ctx.out_dir
+        self.screens = out / "screens.jsonl"
+        self.screens.unlink(missing_ok=True)
         self.decisions, self.rows_log, self.pages, self.writes = (
             out / f for f in ("decisions.jsonl", "rows.jsonl", "pages.jsonl", "writes.jsonl")
         )
@@ -503,12 +534,37 @@ class Loop:
         if query is None:
             query = Query(c.query)
             state.queries.append(query)
-        kept = set(self.top.filter(self.screen_cfg, pd.DataFrame(list(c.rows)), state.topic).url)
+        kept, rest = await self.d1_screen(state.topic, list(c.rows))
+        if rest:
+            kept |= set(self.top.filter(self.screen_cfg, pd.DataFrame(rest), state.topic).url)
         state.papers += [Paper(row, row["url"] in kept) for row in c.rows]
         query.pages = query.pages + 1 if c.kind == "abstract" else c.k // PAGE
         query.new += len(c.rows)
         query.relevant += sum(row["url"] in kept for row in c.rows)
         state.batches += 1
+
+    async def d1_screen(
+        self, topic: str, rows: list[dict[str, Any]]
+    ) -> tuple[set[str], list[dict[str, Any]]]:
+        """(the URLs d1 keeps, the rows left to DeepSeek): all rows without a screener."""
+        s = self.screener
+        if s is None:
+            return set(), rows
+        meter = Meter(self.ctx.gateway, self.ctx.tag("screen"))
+        probs = await asyncio.to_thread(served_probabilities, s.url, s.adapter, topic, rows, meter)
+        kept, rest, log = set(), [], []
+        for i, row in enumerate(rows):
+            p = None if probs is None else probs[i]
+            sure = p is not None and max(p, 1 - p) >= s.delta
+            if sure and p >= 0.5:
+                kept.add(row["url"])
+            elif not sure:
+                rest.append(row)
+            log.append({"url": row["url"], "p_relevant": p, "d1": sure})
+        self.d1_screened += len(rows) - len(rest)
+        with self.screens.open("a") as f:
+            f.writelines(json.dumps(x) + "\n" for x in log)
+        return kept, rest
 
     def documents(self, state: State) -> pd.DataFrame:
         """The writer's documents: the relevant papers, ranked to WRITE_DOCS by DS-base's sem_topk

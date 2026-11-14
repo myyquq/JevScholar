@@ -32,8 +32,8 @@ COST = "cost_usd"
 
 
 def policies(manifest: dict) -> tuple[list[str], list[str]]:
-    """(learned, fixed): the run's systems with a d1 policy and with the fixed rule, one name
-    per writer-sample group, the fixed ones in the run's order."""
+    """(learned, fixed): the run's systems with a d1 policy or a d1 screener, and with the fixed
+    rule (no screener), one name per writer-sample group, the fixed ones in the run's order."""
     exp = Experiment.model_validate(manifest["experiment"])
     heads = dict.fromkeys(sample_groups(manifest).values())
     order = [s for cell in exp.benchmarks.values() for s in cell.systems if s in heads]
@@ -41,7 +41,8 @@ def policies(manifest: dict) -> tuple[list[str], list[str]]:
     for system in order:
         use, params = exp.system_spec(system)
         if use == "controlled":
-            kinds[system] = params.get("policy", {}).get("kind")
+            kind = params.get("policy", {}).get("kind")
+            kinds[system] = "d1" if params.get("screener") else kind
     return [s for s in order if kinds.get(s) == "d1"], [s for s in order if kinds.get(s) == "fixed"]
 
 

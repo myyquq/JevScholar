@@ -229,7 +229,43 @@ scored on the held-out June dev tasks (runs/screen/sft-dev.md) against zero-shot
 reaches DeepSeek's cited recall while deciding most papers, the screener goes into the loop, and
 the fixed rule at more batches runs against the 3-batch rule at matched cost on June dev.
 
-**Versions.** On branch `d1-screen` (from `read-action`). Nothing in the loop changes yet.
+**SFT result** (job 33344984, 34 min; adapter sha256 0ec04682…, epoch 2 of 2 by val CE .594,
+val accuracy .749 against DeepSeek, ECE .03). Training fixes the calibration: AUC against
+DeepSeek .72 → .84 on June dev (cited against not .77 → .81), median P(relevant) .23 → .55.
+
+| June dev (1,781 verdicts, 54 cited) | agree | kept | cited recall | d1 decides |
+|---|---|---|---|---|
+| DeepSeek (CoT sem_filter) | 1.000 | .537 | .907 | 0 |
+| zero-shot cascade, delta .8 | .883 | .421 | .833 | .371 |
+| SFT alone, keep at P >= .5 | .761 | .541 | .889 | 1 |
+| SFT cascade, delta .7 | .907 | .546 | .944 | .636 |
+| SFT cascade, delta .6 | .834 | .544 | .944 | .847 |
+
+Delta is chosen on val (821 verdicts, 38 cited): at .7 the cascade keeps every cited paper
+DeepSeek keeps (.974) while d1 decides 68%, agreeing with DeepSeek on 88%; .6 decides 86% at the
+same recall but agrees on only 82%, so .7. On the held-out June dev it decides 64% and keeps more
+cited papers than DeepSeek alone (.944 against .907: three papers of 54, within noise), keeping
+the same share of papers. So d1 takes over about two thirds of the screening without losing
+cited papers: at 6 batches about $.024 of the $.037 sem_filter spend, which puts the 6-batch
+rule near the 3-batch rule's cost.
+
+**In the loop** (`screener` in systems/controlled.py, none by default). The screening adapter is
+served (`jev controller serve --adapter runs/controller/screen/adapter --port 9943`); each chosen
+search's new papers go to it first in one request (both option orders, charged as `d1_choice`),
+and a paper where d1's top probability reaches delta is decided by d1, the rest by sem_filter as
+before (its per-paper requests, so the verdicts replay). screens.jsonl logs every paper's
+P(relevant) and who decided; the report's meta has `d1_screened`. `jev controller frontier`
+counts a screened cell as a learned one, so it is compared with the unscreened fixed rule's
+curve at matched cost.
+
+**June dev test** (`sbatch scripts/screen_dev.sh`, variant `dev-screen`, run `eval-dev-screen`):
+the fixed rule at 3-6 batches (the same cells as eval-dev-trained: their DeepSeek answers replay)
+and screened at 3-6 and 8 batches, 20 tasks, two writer samples. The claim holds if a screened
+budget beats the fixed rule at matched cost (frontier.md), without a lower cite_p.
+
+**Versions.** On branch `d1-screen` (from `read-action`). Every cell without `screener` keeps its
+identity (the pins in `tests/test_writing.py`); `tests/test_screen.py` covers the screener
+offline.
 
 **Versions.** On branch `read-action` (from `write-actions`). The reading revisions are offered
 only where a cell lists them in `revise`, so every earlier cell keeps its identity (the pins in
