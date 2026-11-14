@@ -11,6 +11,7 @@
 # Usage (from the repository):
 #   sbatch scripts/screen_dev.sh
 #   VARIANT=dev2-screen RUN=eval-dev2-screen sbatch scripts/screen_dev.sh   # Nov dev2 replication
+#   VARIANT=test-screen RUN=eval-test-screen sbatch scripts/screen_dev.sh   # held-out test
 # Settings (environment): VARIANT (dev-screen), RUN (eval-dev-screen), ADAPTER
 # (runs/controller/screen/adapter), JUDGE (1; 0 = generate only).
 #SBATCH --job-name=jev-screen-dev

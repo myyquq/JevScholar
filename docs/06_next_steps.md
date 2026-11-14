@@ -324,6 +324,29 @@ baseline at matched cost) is not met by any controller tried; the screener meets
 (the same quality at lower cost). A held-out confirmation would be the test split with
 ctl_fixed and ctl_screen (the frozen adapter, delta .7), which needs a decision on spend.
 
+**Test plan** (written before the run; variant `test-screen`, run `eval-test-screen`). The
+held-out test split, first 90 of its 180 tasks (the `test` variant's), two writer samples. Frozen
+as on dev: the adapter 0ec04682 at delta .7; `ctl_fixed`, `ctl_screen` and `ctl_screen_b4` are
+exactly the dev cells (pinned by tests/test_screen.py); no test task's verdict was ever trained
+or tuned on. Systems: DS-base intro-only (the strongest baseline), simple RAG k=20, the fixed
+rule (3 batches), screened at 3 and at 4 batches. Decided now, judged once:
+
+1. **Cost** (primary): `ctl_screen` costs less than `ctl_fixed` (list cost per task, paired):
+   expected about −$.008 (−35%), the interval below 0.
+2. **Same quality** (primary, non-inferiority): `ctl_screen` − `ctl_fixed` in U has its 95%
+   lower bound above −.03 (about the fixed rule's gain from 3 to 6 batches on June dev), and in
+   cite_p above −.05 (citation reliability).
+3. **Matched cost** (secondary, the proposal's criterion against the fixed rule):
+   `ctl_screen_b4` (about $.019) against `ctl_fixed` ($.021): U higher, interval above 0.
+   Expected +.010 from dev: likely not significant even at 90 tasks.
+4. **Against DS-base** (descriptive): every controller against DS-base intro-only, which costs
+   about 9 times as much.
+
+Nothing is changed after seeing the results; any further analysis is reported as exploratory.
+Billed estimate (from the dev runs' ledgers, with the replay cache cold): about $8-10 for
+generation (DS-base most of it) and $4 for judging; caps $20 / $8. About 900 episodes, 5-8 hours
+plus peak-hour holds; the job is resumable.
+
 **Versions.** On branch `d1-screen` (from `read-action`). Every cell without `screener` keeps its
 identity (the pins in `tests/test_writing.py`); `tests/test_screen.py` covers the screener
 offline.

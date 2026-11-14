@@ -69,6 +69,15 @@ variants:
         limit: 90
         systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_d1,
                   deepscholar_base_intro_nobg]
+  test-screen:  # the held-out confirmation of the d1 screener (docs/06: test plan), frozen:
+    # adapter 0ec04682, delta .7, as on dev; 90 test tasks, two writer samples
+    # (VARIANT=test-screen RUN=eval-test-screen sbatch scripts/screen_dev.sh)
+    budget: {run_usd: 20.0, judge_run_usd: 8.0}
+    benchmarks:
+      deepscholar:
+        split: test
+        limit: 90
+        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
   replay:  # $0 check: the baselines regenerate from the replay cache, byte-identical
     replay_only: true
     offpeak_only: false

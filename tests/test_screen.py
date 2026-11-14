@@ -243,3 +243,17 @@ def test_the_dev2_replication_has_the_same_pairs_on_new_tasks():
     assert cell.split == "dev2" and cell.limit == 20
     screened = [s for s in cell.systems if "screen" in s and not s.endswith("_s1")]
     assert screened == [f"ctl_screen{b}" for b in ("", "_b4", "_b5", "_b6")]
+
+
+def test_the_test_run_is_frozen_on_the_dev_settings():
+    from jevscholar.config import load_experiment
+    from jevscholar.paths import EXPERIMENTS
+
+    exp = load_experiment(EXPERIMENTS / "evaluate.yaml", "test-screen")
+    cell = exp.benchmarks["deepscholar"]
+    assert (cell.split, cell.limit) == ("test", 90)
+    dev = load_experiment(EXPERIMENTS / "evaluate.yaml", "dev-screen")
+    for system in ("ctl_fixed", "ctl_screen", "ctl_screen_b4"):
+        assert exp.system_spec(system) == dev.system_spec(system)  # the cells tuned on dev
+    screener = exp.system_spec("ctl_screen")[1]["screener"]
+    assert screener["adapter"].startswith("0ec04682") and screener["delta"] == 0.7
