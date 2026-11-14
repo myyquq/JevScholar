@@ -232,3 +232,14 @@ def test_the_screened_cells_are_compared_with_the_fixed_curve():
     params = exp.system_spec("ctl_screen_b8")[1]
     assert params["screener"]["delta"] == 0.7 and params["policy"]["batches"] == 8
     assert Controlled(params).p.max_batches == 8
+
+
+def test_the_dev2_replication_has_the_same_pairs_on_new_tasks():
+    from jevscholar.config import load_experiment
+    from jevscholar.paths import EXPERIMENTS
+
+    exp = load_experiment(EXPERIMENTS / "evaluate.yaml", "dev2-screen")
+    cell = exp.benchmarks["deepscholar"]
+    assert cell.split == "dev2" and cell.limit == 20
+    screened = [s for s in cell.systems if "screen" in s and not s.endswith("_s1")]
+    assert screened == [f"ctl_screen{b}" for b in ("", "_b4", "_b5", "_b6")]

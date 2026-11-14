@@ -10,8 +10,9 @@
 # Resumable: resubmit with the same RUN and finished tasks and judgments are kept.
 # Usage (from the repository):
 #   sbatch scripts/screen_dev.sh
-# Settings (environment): RUN (eval-dev-screen), ADAPTER (runs/controller/screen/adapter),
-# JUDGE (1; 0 = generate only).
+#   VARIANT=dev2-screen RUN=eval-dev2-screen sbatch scripts/screen_dev.sh   # Nov dev2 replication
+# Settings (environment): VARIANT (dev-screen), RUN (eval-dev-screen), ADAPTER
+# (runs/controller/screen/adapter), JUDGE (1; 0 = generate only).
 #SBATCH --job-name=jev-screen-dev
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
@@ -22,6 +23,7 @@
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 
+VARIANT=${VARIANT:-dev-screen}
 RUN=${RUN:-eval-dev-screen}
 ADAPTER=${ADAPTER:-runs/controller/screen/adapter}
 JUDGE=${JUDGE:-1}
@@ -45,7 +47,7 @@ done
 curl -sf http://127.0.0.1:9943/info; echo
 
 # 2. Generation.
-uv run jev run evaluate --variant dev-screen --run-id "$RUN"
+uv run jev run evaluate --variant "$VARIANT" --run-id "$RUN"
 
 # 3. Judging and the report (no GPU needed).
 stop_server

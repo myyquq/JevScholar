@@ -53,6 +53,13 @@ variants:
         limit: 20
         systems: [ctl_fixed, ctl_fixed_b4, ctl_fixed_b5, ctl_fixed_b6,
                   ctl_screen, ctl_screen_b4, ctl_screen_b5, ctl_screen_b6, ctl_screen_b8]
+  dev2-screen:  # Nov dev2: the same comparison on 20 new tasks (scripts/screen_dev.sh, VARIANT)
+    benchmarks:
+      deepscholar:
+        split: dev2
+        limit: 20
+        systems: [ctl_fixed, ctl_fixed_b4, ctl_fixed_b5, ctl_fixed_b6,
+                  ctl_screen, ctl_screen_b4, ctl_screen_b5, ctl_screen_b6]
   dev2: {benchmarks: {deepscholar: {split: dev2, limit: 20}}}   # Nov dev2
   test:  # the held-out tasks; the trained controllers join once frozen
     budget: {run_usd: 15.0, judge_run_usd: 5.0}

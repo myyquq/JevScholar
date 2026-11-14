@@ -263,6 +263,37 @@ the fixed rule at 3-6 batches (the same cells as eval-dev-trained: their DeepSee
 and screened at 3-6 and 8 batches, 20 tasks, two writer samples. The claim holds if a screened
 budget beats the fixed rule at matched cost (frontier.md), without a lower cite_p.
 
+**June dev result** (run `eval-dev-screen`, job 33372245, 1 h 50 min; runs/eval-dev-screen/
+frontier.md). In the loop the screener behaves as offline: d1 decides 64% of the screened papers,
+agrees with DeepSeek's verdict on 88-89% of those where one is known, and the screened runs keep as
+many papers (b6: 29.5 of 54.9, unscreened 29.8 of 54.4) and as many of the cited ones (.95 against
+.91 at b6). But the saving is smaller than projected, and buys no quality:
+
+| batches | fixed U | $ | screened U | $ |
+|---|---|---|---|---|
+| 3 | .383 | .021 | .362 | .014 |
+| 4 | .398 | .028 | .397 | .019 |
+| 5 | .407 | .041 | .389 | .028 |
+| 6 | .410 | .047 | .396 | .034 |
+| 8 | | | .373 | .047 |
+
+- Cost: −$.011 a task at the same batches (−28% at b6, not −50%): sem_filter's spend falls only
+  42% at b6 ($.037 → $.021) though d1 decides 65% of the papers (DeepSeek keeps the borderline
+  ones, whose CoT is longer), and d1's own calls cost $.002 (about 1.4k prompt tokens a paper for
+  both option orders).
+- Quality at the same batches, pooled over b3-b6 per task: U −.014 [−.040, .012], nugget −.018
+  [−.043, .006], cite_p +.008 [−.028, .044], claim_support +.003: no loss shown, none ruled out.
+- Matched cost: no screened budget beats the fixed curve. The best, b4 ($.019) against fixed b3
+  ($.021), is U +.013 [−.018, .044]; b6 against fixed b5 U −.011 [−.057, .036] (claim_support
+  +.042 [.002, .083]); b8 against fixed b6 U −.037 [−.077, .003], nugget −.045 [−.082, −.008].
+  The fixed curve flattens after 4 batches (+.012 U for +$.020 from b4 to b6) and the screened
+  one falls at 8 batches, so the money saved buys batches that add little.
+
+So the d1 screener is a cost saving (about a third of the spend at equal batches, the papers kept
+nearly the same), not a quality gain at matched cost. Whether its quality is truly unchanged
+needs more tasks: variant `dev2-screen` (`VARIANT=dev2-screen RUN=eval-dev2-screen sbatch
+scripts/screen_dev.sh`) repeats b3-b6 with and without it on the 20 Nov dev2 tasks.
+
 **Versions.** On branch `d1-screen` (from `read-action`). Every cell without `screener` keeps its
 identity (the pins in `tests/test_writing.py`); `tests/test_screen.py` covers the screener
 offline.
