@@ -347,6 +347,42 @@ Billed estimate (from the dev runs' ledgers, with the replay cache cold): about 
 generation (DS-base most of it) and $4 for judging; caps $20 / $8. About 900 episodes, 5-8 hours
 plus peak-hour holds; the job is resumable.
 
+**Test result** (`eval-test-screen`, 90 tasks, two writer samples averaged per task; generation
+job 33417440, judging job 33417446; DeepSeek-judged, non-official). On test, d1 decides 66% of the
+papers (3432 of 5186 in `ctl_screen`), as on dev (64%).
+
+| system | cost $/task | U | nugget | ref recall | cite_p | claim_support |
+|---|---|---|---|---|---|---|
+| DS-base intro-only | .188 | .502 | .419 | .250 | .409 | .775 |
+| simple RAG k=20 | .003 | .496 | .351 | .114 | .477 | .823 |
+| fixed b3 (`ctl_fixed`) | .0211 | .528 | .367 | .160 | .588 | .878 |
+| screened b3 (`ctl_screen`) | .0135 | .520 | .354 | .167 | .592 | .881 |
+| screened b4 (`ctl_screen_b4`) | .0179 | .539 | .375 | .174 | .574 | .885 |
+
+Against the pre-registered hypotheses (paired per task, 95% t-interval):
+
+1. **Cost: holds.** `ctl_screen` − `ctl_fixed` = −$.0076 [−.0080, −.0071] (−36%).
+2. **Same quality: holds for cite_p, misses narrowly for U.** U −.008 [−.035, +.019]: the lower
+   bound is below the margin −.03, so non-inferiority in U is **not** shown at 90 tasks (the
+   point estimate is within the margin; nugget −.013 [−.040, +.015]). cite_p +.004 [−.018, +.027]
+   and claim_support +.003 [−.014, +.019]: non-inferior.
+3. **Matched cost: not shown.** `ctl_screen_b4` ($.018, cheaper than `ctl_fixed` by
+   $.0031 [−.0045, −.0018]) − `ctl_fixed` in U = +.011 [−.019, +.041], p .48; the dev estimate
+   (+.010) replicates in size but not significantly, as expected.
+4. **Against DS-base (descriptive).** Every controller costs about a tenth of DS-base ($.013-.021
+   against $.188). DS-base covers more nuggets (+.052 over `ctl_fixed`) and references (+.090),
+   but its citations are much less reliable (cite_p −.179, claim_support −.103); in U the fixed
+   rule is +.025 above DS-base (not significant, [−.020, +.070]), the screened b4 about +.036.
+
+**What the test shows.** The d1 screener's cost saving transfers to held-out tasks exactly
+(−36% at the same number of batches), with no detectable loss in citation reliability; in U the
+loss is small (−.008) but the interval is not tight enough to rule out −.03. Spending the saving
+on a fourth batch gives a cheaper system with a higher point estimate in U (+.011) that is not
+significant. So the proposal's criterion (higher quality than the strongest baseline at matched
+cost) is met against DS-base only descriptively, by cost (a tenth) and citation reliability, not
+by a significant quality gain; against the fixed rule, the screener is a cost saving, not a
+quality gain. Anything further on this run is exploratory.
+
 **Versions.** On branch `d1-screen` (from `read-action`). Every cell without `screener` keeps its
 identity (the pins in `tests/test_writing.py`); `tests/test_screen.py` covers the screener
 offline.
