@@ -294,6 +294,36 @@ nearly the same), not a quality gain at matched cost. Whether its quality is tru
 needs more tasks: variant `dev2-screen` (`VARIANT=dev2-screen RUN=eval-dev2-screen sbatch
 scripts/screen_dev.sh`) repeats b3-b6 with and without it on the 20 Nov dev2 tasks.
 
+**Nov dev2 replication** (run `eval-dev2-screen`, job 33407595, 1 h 42 min; 20 new tasks). Here
+the fixed rule's curve is not even monotone (U .580 / .544 / .544 / .579 at 3-6 batches, $.021 to
+$.054): more search buys nothing measurable. The screened rule saves $.013 a task at equal
+batches (b6 $.054 → $.036) and scores U +.014 [−.023, .051] against it (claim_support +.029
+[.004, .053]). At matched cost the screened budgets are ahead of the fixed one they are paired
+with (b5 against fixed b4 U +.032, b6 against fixed b5 +.018), none significantly.
+
+**Both dev sets** (40 tasks, paired per task, b3-b6 averaged per task):
+
+| screened − unscreened, same batches | June dev | Nov dev2 | both |
+|---|---|---|---|
+| cost $ | −.011 | −.013 | −.012 [−.014, −.010] |
+| U | −.014 [−.040, .012] | +.014 [−.023, .051] | +.000 [−.022, .022] |
+| nugget | −.018 | +.003 | −.008 [−.028, .013] |
+| cite_p | +.008 | +.024 | +.016 [−.008, .040] |
+| claim_support | +.003 | +.029 | +.016 [−.001, .032] |
+
+At matched cost over both (screened b(k+1) against fixed b(k), which costs as much or more): b4
+vs b3 U +.010 [−.026, .045], b5 vs b4 +.011 [−.029, .051], b6 vs b5 +.004 [−.031, .038].
+
+**What this shows.** The d1 screener cuts the research loop's cost by about a third at the same
+search (−$.012 of about $.035 a task) with quality unchanged to within ±.022 U and citation
+reliability no lower (cite_p and claim_support both a little higher, not significantly). It does
+not give higher quality at matched cost: the fixed rule's quality barely moves with more search
+in this range (June dev +.027 U from 3 to 6 batches, dev2 none), so money moved from screening
+to search has nothing to buy. The proposal's criterion (higher quality than the strongest
+baseline at matched cost) is not met by any controller tried; the screener meets the weaker one
+(the same quality at lower cost). A held-out confirmation would be the test split with
+ctl_fixed and ctl_screen (the frozen adapter, delta .7), which needs a decision on spend.
+
 **Versions.** On branch `d1-screen` (from `read-action`). Every cell without `screener` keeps its
 identity (the pins in `tests/test_writing.py`); `tests/test_screen.py` covers the screener
 offline.
