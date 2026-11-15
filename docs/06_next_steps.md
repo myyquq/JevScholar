@@ -383,6 +383,12 @@ cost) is met against DS-base only descriptively, by cost (a tenth) and citation 
 by a significant quality gain; against the fixed rule, the screener is a cost saving, not a
 quality gain. Anything further on this run is exploratory.
 
+**Exploratory: all 180 test tasks** (variant `test-screen-180`, run `eval-test-screen-180`; decided
+after seeing the 90-task result, so it is **not** a confirmation). The same frozen systems on the
+whole test split, to see how tight the U interval of hypothesis 2 gets; the first 90 tasks replay
+from the DeepSeek and judge caches, so the new spend is about the 90-task run's (~$7 billed
+generation, ~$7 judging). Reported with the same paired analysis, as exploratory.
+
 **Versions.** On branch `d1-screen` (from `read-action`). Every cell without `screener` keeps its
 identity (the pins in `tests/test_writing.py`); `tests/test_screen.py` covers the screener
 offline.

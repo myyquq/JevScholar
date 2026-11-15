@@ -78,6 +78,16 @@ variants:
         split: test
         limit: 90
         systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
+  test-screen-180:  # exploratory, decided after test-screen's result (docs/06): the same frozen
+    # systems on all 180 test tasks; the first 90 replay from the caches (DeepSeek, judge)
+    # (VARIANT=test-screen-180 RUN=eval-test-screen-180 JUDGE=0 sbatch scripts/screen_dev.sh,
+    #  then scripts/judge.sh as a CPU job)
+    budget: {run_usd: 20.0, judge_run_usd: 16.0}
+    benchmarks:
+      deepscholar:
+        split: test
+        limit: 180
+        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
   replay:  # $0 check: the baselines regenerate from the replay cache, byte-identical
     replay_only: true
     offpeak_only: false

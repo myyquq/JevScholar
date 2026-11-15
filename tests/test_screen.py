@@ -257,3 +257,15 @@ def test_the_test_run_is_frozen_on_the_dev_settings():
         assert exp.system_spec(system) == dev.system_spec(system)  # the cells tuned on dev
     screener = exp.system_spec("ctl_screen")[1]["screener"]
     assert screener["adapter"].startswith("0ec04682") and screener["delta"] == 0.7
+
+
+def test_the_full_test_run_extends_the_frozen_one():
+    from jevscholar.config import load_experiment
+    from jevscholar.paths import EXPERIMENTS
+
+    full = load_experiment(EXPERIMENTS / "evaluate.yaml", "test-screen-180")
+    first = load_experiment(EXPERIMENTS / "evaluate.yaml", "test-screen")
+    cell, frozen = full.benchmarks["deepscholar"], first.benchmarks["deepscholar"]
+    assert (cell.split, cell.limit) == ("test", 180) and cell.systems == frozen.systems
+    for system in frozen.systems:
+        assert full.system_spec(system) == first.system_spec(system)
