@@ -263,66 +263,82 @@ the fixed rule at 3-6 batches (the same cells as eval-dev-trained: their DeepSee
 and screened at 3-6 and 8 batches, 20 tasks, two writer samples. The claim holds if a screened
 budget beats the fixed rule at matched cost (frontier.md), without a lower cite_p.
 
+**How results are reported here.** On the benchmark's own metrics, each separately: nugget
+coverage and reference recall (completeness), cite_p and claim support (citation reliability),
+claim coverage, and list cost per task. U (docs/04) is a project-made weighted sum used only as
+the training reward and for selecting among candidates; it has no external basis, so it is not
+used to state results. Where the test plan below named U (it was written before this rule), the
+U figure is given once, as registered, next to the original metrics.
+
 **June dev result** (run `eval-dev-screen`, job 33372245, 1 h 50 min; runs/eval-dev-screen/
 frontier.md). In the loop the screener behaves as offline: d1 decides 64% of the screened papers,
 agrees with DeepSeek's verdict on 88-89% of those where one is known, and the screened runs keep as
 many papers (b6: 29.5 of 54.9, unscreened 29.8 of 54.4) and as many of the cited ones (.95 against
-.91 at b6). But the saving is smaller than projected, and buys no quality:
+.91 at b6). Means (20 tasks, writer samples averaged; bN = N search batches):
 
-| batches | fixed U | $ | screened U | $ |
-|---|---|---|---|---|
-| 3 | .383 | .021 | .362 | .014 |
-| 4 | .398 | .028 | .397 | .019 |
-| 5 | .407 | .041 | .389 | .028 |
-| 6 | .410 | .047 | .396 | .034 |
-| 8 | | | .373 | .047 |
+| system | $ | nugget | ref recall | cite_p | claim support | claim cov. |
+|---|---|---|---|---|---|---|
+| fixed b3 | .021 | .210 | .220 | .606 | .892 | .773 |
+| fixed b4 | .028 | .231 | .218 | .583 | .880 | .782 |
+| fixed b5 | .041 | .243 | .247 | .549 | .886 | .793 |
+| fixed b6 | .047 | .253 | .244 | .530 | .872 | .775 |
+| screened b3 | .014 | .194 | .206 | .589 | .855 | .739 |
+| screened b4 | .019 | .225 | .222 | .589 | .885 | .773 |
+| screened b5 | .029 | .225 | .237 | .528 | .872 | .769 |
+| screened b6 | .034 | .221 | .252 | .594 | .928 | .812 |
+| screened b8 | .047 | .208 | .262 | .538 | .910 | – |
+
+Screened − fixed at the same batches (paired, 95% t-interval; * = interval excludes 0):
+
+| batches | $ | nugget | ref recall | cite_p | claim support |
+|---|---|---|---|---|---|
+| 3 | −.0074* | −.016 [−.051, .018] | −.014 [−.030, .001] | −.016 [−.078, .045] | −.037 [−.066, −.008]* |
+| 4 | −.0092* | −.006 [−.041, .028] | +.004 [−.023, .031] | +.006 [−.054, .066] | +.005 [−.041, .051] |
+| 5 | −.0124* | −.018 [−.071, .036] | −.010 [−.040, .020] | −.021 [−.084, .041] | −.014 [−.048, .020] |
+| 6 | −.0134* | −.032 [−.068, .003] | +.008 [−.019, .035] | +.064 [−.013, .141] | +.056 [.017, .096]* |
 
 - Cost: −$.011 a task at the same batches (−28% at b6, not −50%): sem_filter's spend falls only
   42% at b6 ($.037 → $.021) though d1 decides 65% of the papers (DeepSeek keeps the borderline
   ones, whose CoT is longer), and d1's own calls cost $.002 (about 1.4k prompt tokens a paper for
   both option orders).
-- Quality at the same batches, pooled over b3-b6 per task: U −.014 [−.040, .012], nugget −.018
-  [−.043, .006], cite_p +.008 [−.028, .044], claim_support +.003: no loss shown, none ruled out.
-- Matched cost: no screened budget beats the fixed curve. The best, b4 ($.019) against fixed b3
-  ($.021), is U +.013 [−.018, .044]; b6 against fixed b5 U −.011 [−.057, .036] (claim_support
-  +.042 [.002, .083]); b8 against fixed b6 U −.037 [−.077, .003], nugget −.045 [−.082, −.008].
-  The fixed curve flattens after 4 batches (+.012 U for +$.020 from b4 to b6) and the screened
-  one falls at 8 batches, so the money saved buys batches that add little.
+- Matched cost (frontier.md): screened b4 ($.019) against fixed b3 ($.021): nugget +.015
+  [−.019, .048], cite_p −.017 [−.078, .044]; screened b8 against fixed b6: nugget −.045
+  [−.082, −.008]. More search raises nugget only slowly (fixed b3 → b6: +.043 for +$.026) and
+  lowers cite_p (−.075), so the money saved buys little.
 
-So the d1 screener is a cost saving (about a third of the spend at equal batches, the papers kept
-nearly the same), not a quality gain at matched cost. Whether its quality is truly unchanged
-needs more tasks: variant `dev2-screen` (`VARIANT=dev2-screen RUN=eval-dev2-screen sbatch
-scripts/screen_dev.sh`) repeats b3-b6 with and without it on the 20 Nov dev2 tasks.
+**Nov dev2 replication** (run `eval-dev2-screen`, job 33407595, 1 h 42 min; 20 new tasks).
 
-**Nov dev2 replication** (run `eval-dev2-screen`, job 33407595, 1 h 42 min; 20 new tasks). Here
-the fixed rule's curve is not even monotone (U .580 / .544 / .544 / .579 at 3-6 batches, $.021 to
-$.054): more search buys nothing measurable. The screened rule saves $.013 a task at equal
-batches (b6 $.054 → $.036) and scores U +.014 [−.023, .051] against it (claim_support +.029
-[.004, .053]). At matched cost the screened budgets are ahead of the fixed one they are paired
-with (b5 against fixed b4 U +.032, b6 against fixed b5 +.018), none significantly.
+| system | $ | nugget | ref recall | cite_p | claim support | claim cov. |
+|---|---|---|---|---|---|---|
+| fixed b3 | .021 | .415 | .206 | .576 | .858 | .755 |
+| fixed b4 | .032 | .384 | .224 | .539 | .861 | .745 |
+| fixed b5 | .045 | .383 | .267 | .549 | .857 | .767 |
+| fixed b6 | .054 | .420 | .278 | .521 | .869 | .768 |
+| screened b3 | .013 | .404 | .212 | .605 | .893 | .783 |
+| screened b4 | .021 | .411 | .235 | .588 | .903 | .789 |
+| screened b5 | .031 | .409 | .272 | .531 | .864 | .761 |
+| screened b6 | .036 | .391 | .275 | .558 | .898 | .798 |
 
-**Both dev sets** (40 tasks, paired per task, b3-b6 averaged per task):
+| batches | $ | nugget | ref recall | cite_p | claim support |
+|---|---|---|---|---|---|
+| 3 | −.0082* | −.012 [−.042, .019] | +.006 [−.017, .029] | +.029 [−.020, .079] | +.036 [.004, .067]* |
+| 4 | −.0117* | +.028 [−.030, .086] | +.011 [−.016, .038] | +.048 [−.019, .115] | +.042 [.008, .076]* |
+| 5 | −.0148* | +.026 [−.030, .083] | +.005 [−.023, .034] | −.018 [−.074, .038] | +.007 [−.037, .052] |
+| 6 | −.0179* | −.030 [−.092, .032] | −.003 [−.048, .042] | +.037 [−.029, .103] | +.030 [−.025, .084] |
 
-| screened − unscreened, same batches | June dev | Nov dev2 | both |
-|---|---|---|---|
-| cost $ | −.011 | −.013 | −.012 [−.014, −.010] |
-| U | −.014 [−.040, .012] | +.014 [−.023, .051] | +.000 [−.022, .022] |
-| nugget | −.018 | +.003 | −.008 [−.028, .013] |
-| cite_p | +.008 | +.024 | +.016 [−.008, .040] |
-| claim_support | +.003 | +.029 | +.016 [−.001, .032] |
+Here nugget does not rise with search at all (fixed b3 .415, b6 .420); reference recall does
+(.206 → .278).
 
-At matched cost over both (screened b(k+1) against fixed b(k), which costs as much or more): b4
-vs b3 U +.010 [−.026, .045], b5 vs b4 +.011 [−.029, .051], b6 vs b5 +.004 [−.031, .038].
+**Both dev sets** (40 tasks, paired per task, b3-b6 averaged per task), screened − unscreened at
+the same batches: cost −$.012 [−.014, −.010]; nugget −.008 [−.028, .013]; cite_p +.016
+[−.008, .040]; claim support +.016 [−.001, .032].
 
 **What this shows.** The d1 screener cuts the research loop's cost by about a third at the same
-search (−$.012 of about $.035 a task) with quality unchanged to within ±.022 U and citation
-reliability no lower (cite_p and claim_support both a little higher, not significantly). It does
-not give higher quality at matched cost: the fixed rule's quality barely moves with more search
-in this range (June dev +.027 U from 3 to 6 batches, dev2 none), so money moved from screening
-to search has nothing to buy. The proposal's criterion (higher quality than the strongest
-baseline at matched cost) is not met by any controller tried; the screener meets the weaker one
-(the same quality at lower cost). A held-out confirmation would be the test split with
-ctl_fixed and ctl_screen (the frozen adapter, delta .7), which needs a decision on spend.
+search (−$.012 of about $.035 a task), with no metric significantly lower when pooled (nugget
+−.008, cite_p and claim support a little higher). It does not give a clear quality gain at
+matched cost: in this range more search raises reference recall but barely nugget coverage, and
+lowers cite_p, so money moved from screening to search has little to buy. A held-out
+confirmation is the test split with ctl_fixed and ctl_screen (the frozen adapter, delta .7).
 
 **Test plan** (written before the run; variant `test-screen`, run `eval-test-screen`). The
 held-out test split, first 90 of its 180 tasks (the `test` variant's), two writer samples. Frozen
@@ -347,47 +363,70 @@ Billed estimate (from the dev runs' ledgers, with the replay cache cold): about 
 generation (DS-base most of it) and $4 for judging; caps $20 / $8. About 900 episodes, 5-8 hours
 plus peak-hour holds; the job is resumable.
 
+**Systems compared on test.** All use DeepSeek-V4.1-Flash, arXiv search and the same writer.
+
+- **DS-base intro-only**: the reference pipeline (DeepScholar-base), at its natural cost.
+- **simple RAG k=20**: retrieve 20 abstracts, write in one pass.
+- **fixed b3** (`ctl_fixed`): our loop with a fixed rule, 3 search batches; every retrieved paper
+  is screened for relevance by DeepSeek (sem_filter).
+- **screened b3** (`ctl_screen`): the same, but the trained d1 screens each paper first and
+  DeepSeek only screens the papers d1 is unsure of. The ablation: fixed b3 is screened b3 with
+  its main component (the d1 screener) removed.
+- **screened b4** (`ctl_screen_b4`): screened, with a 4th batch bought with the money the screener
+  saves (still cheaper than fixed b3).
+
 **Test result** (`eval-test-screen`, 90 tasks, two writer samples averaged per task; generation
 job 33417440, judging job 33417446; DeepSeek-judged, non-official). On test, d1 decides 66% of the
 papers (3432 of 5186 in `ctl_screen`), as on dev (64%).
 
-| system | cost $/task | U | nugget | ref recall | cite_p | claim_support |
+| system | $/task | nugget | ref recall | cite_p | claim support | claim cov. |
 |---|---|---|---|---|---|---|
-| DS-base intro-only | .188 | .502 | .419 | .250 | .409 | .775 |
-| simple RAG k=20 | .003 | .496 | .351 | .114 | .477 | .823 |
-| fixed b3 (`ctl_fixed`) | .0211 | .528 | .367 | .160 | .588 | .878 |
-| screened b3 (`ctl_screen`) | .0135 | .520 | .354 | .167 | .592 | .881 |
-| screened b4 (`ctl_screen_b4`) | .0179 | .539 | .375 | .174 | .574 | .885 |
+| DS-base intro-only | .188 | .419 | .250 | .409 | .775 | .687 |
+| simple RAG k=20 | .003 | .351 | .114 | .477 | .823 | .719 |
+| fixed b3 | .0211 | .367 | .160 | .588 | .878 | .776 |
+| screened b3 | .0135 | .354 | .167 | .592 | .881 | .773 |
+| screened b4 | .0179 | .375 | .174 | .574 | .885 | .779 |
 
-Against the pre-registered hypotheses (paired per task, 95% t-interval):
+Every pair, A − B (paired per task, 95% t-interval; * = interval excludes 0; ref recall on 83
+tasks with gold; a report with no citation to check scores 0 on the citation metrics, as in
+report.md):
 
-1. **Cost: holds.** `ctl_screen` − `ctl_fixed` = −$.0076 [−.0080, −.0071] (−36%).
-2. **Same quality: holds for cite_p, misses narrowly for U.** U −.008 [−.035, +.019]: the lower
-   bound is below the margin −.03, so non-inferiority in U is **not** shown at 90 tasks (the
-   point estimate is within the margin; nugget −.013 [−.040, +.015]). cite_p +.004 [−.018, +.027]
-   and claim_support +.003 [−.014, +.019]: non-inferior.
-3. **Matched cost: not shown.** `ctl_screen_b4` ($.018, cheaper than `ctl_fixed` by
-   $.0031 [−.0045, −.0018]) − `ctl_fixed` in U = +.011 [−.019, +.041], p .48; the dev estimate
-   (+.010) replicates in size but not significantly, as expected.
-4. **Against DS-base (descriptive).** Every controller costs about a tenth of DS-base ($.013-.021
-   against $.188). DS-base covers more nuggets (+.052 over `ctl_fixed`) and references (+.090),
-   but its citations are much less reliable (cite_p −.179, claim_support −.103); in U the fixed
-   rule is +.025 above DS-base (not significant, [−.020, +.070]), the screened b4 about +.036.
+| A − B | nugget | ref recall | cite_p | claim support | claim cov. | $ |
+|---|---|---|---|---|---|---|
+| DS-base − simple RAG | +.068 [.032, .105]* | +.136 [.071, .201]* | −.068 [−.101, −.035]* | −.048 [−.080, −.017]* | −.033 [−.061, −.004]* | +.1851* |
+| DS-base − fixed b3 | +.052 [.009, .096]* | +.090 [.027, .154]* | −.179 [−.210, −.148]* | −.103 [−.131, −.076]* | −.090 [−.115, −.064]* | +.1671* |
+| DS-base − screened b3 | +.065 [.018, .112]* | +.083 [.022, .143]* | −.183 [−.212, −.154]* | −.106 [−.131, −.081]* | −.086 [−.111, −.062]* | +.1747* |
+| DS-base − screened b4 | +.044 [.007, .081]* | +.076 [.015, .138]* | −.165 [−.199, −.131]* | −.111 [−.133, −.089]* | −.092 [−.115, −.069]* | +.1702* |
+| simple RAG − fixed b3 | −.016 [−.050, .019] | −.046 [−.084, −.007]* | −.111 [−.140, −.082]* | −.055 [−.083, −.027]* | −.057 [−.084, −.030]* | −.0180* |
+| simple RAG − screened b3 | −.003 [−.039, .033] | −.053 [−.092, −.015]* | −.115 [−.147, −.083]* | −.057 [−.083, −.032]* | −.054 [−.079, −.029]* | −.0105* |
+| simple RAG − screened b4 | −.024 [−.050, .002] | −.060 [−.099, −.020]* | −.097 [−.130, −.064]* | −.062 [−.086, −.038]* | −.059 [−.084, −.035]* | −.0149* |
+| screened b3 − fixed b3 | −.013 [−.040, .015] | +.008 [−.008, .023] | +.004 [−.018, .027] | +.003 [−.014, .019] | −.003 [−.019, .013] | −.0076* |
+| screened b4 − fixed b3 | +.009 [−.022, .039] | +.014 [−.007, .034] | −.014 [−.043, .015] | +.007 [−.010, .024] | +.002 [−.015, .020] | −.0031* |
+| screened b4 − screened b3 | +.021 [−.005, .047] | +.006 [−.006, .018] | −.018 [−.047, .010] | +.005 [−.010, .020] | +.005 [−.010, .021] | +.0045* |
 
-**What the test shows.** The d1 screener's cost saving transfers to held-out tasks exactly
-(−36% at the same number of batches), with no detectable loss in citation reliability; in U the
-loss is small (−.008) but the interval is not tight enough to rule out −.03. Spending the saving
-on a fourth batch gives a cheaper system with a higher point estimate in U (+.011) that is not
-significant. So the proposal's criterion (higher quality than the strongest baseline at matched
-cost) is met against DS-base only descriptively, by cost (a tenth) and citation reliability, not
-by a significant quality gain; against the fixed rule, the screener is a cost saving, not a
-quality gain. Anything further on this run is exploratory.
+Against the pre-registered hypotheses:
+
+1. **Cost: holds.** screened b3 − fixed b3 = −$.0076 [−.0080, −.0071] (−36%).
+2. **Same quality: holds for cite_p; for U, as registered, misses narrowly.** cite_p +.004
+   [−.018, .027], lower bound above −.05. On every original metric screened b3 is within noise of
+   fixed b3 (nugget −.013 [−.040, .015], claim support +.003). The registered U test (lower bound
+   above −.03): −.008 [−.035, .019], not shown at 90 tasks.
+3. **Matched cost: not shown.** screened b4 is cheaper than fixed b3 by $.0031 and higher on
+   nugget (+.009), ref recall (+.014) and claim support (+.007), none significantly; cite_p −.014,
+   not significant. (Registered U: +.011 [−.019, .041].)
+4. **Against DS-base (descriptive).** Every controller costs about a tenth of DS-base. DS-base is
+   more complete (nugget +.044 to +.065, ref recall +.076 to +.090 over the controllers), and its
+   citations are much less reliable (cite_p −.165 to −.183, claim support −.103 to −.111).
+
+**What the test shows.** The d1 screener's cost saving transfers to held-out tasks (−36% at the
+same number of batches) with no metric detectably lower. Spending the saving on a fourth batch
+moves completeness up a little at lower cost, not significantly. Against DS-base the controllers
+trade completeness for citation reliability at a tenth of the cost; no controller is more
+complete than DS-base. Anything further on this run is exploratory.
 
 **Exploratory: all 180 test tasks** (variant `test-screen-180`, run `eval-test-screen-180`; decided
 after seeing the 90-task result, so it is **not** a confirmation). The same frozen systems on the
-whole test split, to see how tight the U interval of hypothesis 2 gets; the first 90 tasks replay
-from the DeepSeek and judge caches, so the new spend is about the 90-task run's (~$7 billed
-generation, ~$7 judging). Reported with the same paired analysis, as exploratory.
+whole test split, to narrow the intervals.
 
 **Exploratory result** (`eval-test-screen-180`; GPU jobs 33434901, cancelled, and 33440489,
 judging job 33440494, 7:12; billed $7.41 generation, $5.11 judging). The first 90 tasks did
@@ -396,37 +435,40 @@ generations repeated byte for byte (simple RAG 90/90, the controllers 45-60/90, 
 this run is a second, independent pass over the first 90 plus the 90 new tasks, not the 90-task
 run extended.
 
-| system | cost $/task | U | nugget | ref recall | cite_p | claim_support |
+| system | $/task | nugget | ref recall | cite_p | claim support | claim cov. |
 |---|---|---|---|---|---|---|
-| DS-base intro-only | .187 | .512 | .432 | .230 | .413 | .776 |
-| simple RAG k=20 | .003 | .512 | .368 | .117 | .466 | .830 |
-| fixed b3 | .0210 | .522 | .364 | .143 | .582 | .881 |
-| screened b3 | .0133 | .534 | .372 | .148 | .586 | .877 |
-| screened b4 | .0185 | .548 | .387 | .166 | .559 | .879 |
+| DS-base intro-only | .191 | .432 | .230 | .413 | .776 | .686 |
+| simple RAG k=20 | .003 | .368 | .117 | .466 | .831 | .718 |
+| fixed b3 | .0210 | .364 | .143 | .582 | .881 | .767 |
+| screened b3 | .0133 | .372 | .148 | .586 | .877 | .770 |
+| screened b4 | .0185 | .387 | .166 | .559 | .879 | .776 |
 
-Paired against `ctl_fixed`, 180 tasks:
+| A − B (180 tasks; ref recall 168) | nugget | ref recall | cite_p | claim support | claim cov. | $ |
+|---|---|---|---|---|---|---|
+| DS-base − simple RAG | +.064 [.042, .087]* | +.113 [.070, .156]* | −.053 [−.075, −.030]* | −.054 [−.074, −.035]* | −.033 [−.052, −.014]* | +.1882* |
+| DS-base − fixed b3 | +.068 [.042, .095]* | +.087 [.047, .126]* | −.168 [−.190, −.147]* | −.105 [−.123, −.087]* | −.081 [−.099, −.063]* | +.1702* |
+| DS-base − screened b3 | +.061 [.034, .087]* | +.082 [.042, .121]* | −.173 [−.194, −.152]* | −.101 [−.118, −.084]* | −.084 [−.102, −.066]* | +.1779* |
+| DS-base − screened b4 | +.045 [.019, .070]* | +.064 [.024, .104]* | −.146 [−.168, −.123]* | −.103 [−.120, −.086]* | −.090 [−.108, −.073]* | +.1727* |
+| simple RAG − fixed b3 | +.004 [−.018, .026] | −.026 [−.057, .004] | −.116 [−.137, −.094]* | −.051 [−.068, −.033]* | −.048 [−.066, −.030]* | −.0179* |
+| simple RAG − screened b3 | −.004 [−.025, .018] | −.031 [−.063, .000] | −.120 [−.142, −.098]* | −.047 [−.065, −.029]* | −.051 [−.070, −.033]* | −.0102* |
+| simple RAG − screened b4 | −.019 [−.038, −.001]* | −.049 [−.084, −.014]* | −.093 [−.115, −.070]* | −.049 [−.066, −.032]* | −.058 [−.075, −.040]* | −.0155* |
+| screened b3 − fixed b3 | +.008 [−.009, .024] | +.005 [−.006, .016] | +.005 [−.011, .021] | −.004 [−.017, .008] | +.003 [−.010, .016] | −.0077* |
+| screened b4 − fixed b3 | +.023 [.005, .042]* | +.023 [.004, .042]* | −.023 [−.043, −.003]* | −.002 [−.014, .010] | +.009 [−.003, .022] | −.0025* |
+| screened b4 − screened b3 | +.016 [−.001, .033] | +.018 [.003, .033]* | −.028 [−.046, −.009]* | +.002 [−.011, .015] | +.006 [−.007, .020] | +.0053* |
 
-- screened b3: cost −$.0077 [−.0080, −.0074]; U +.011 [−.005, +.027]; cite_p +.005
-  [−.011, +.021]; claim_support −.004 [−.017, +.008]. With the hypothesis-2 margins, both lower
-  bounds now clear (U −.005 > −.03, cite_p −.011 > −.05).
-- screened b4 (cheaper by $.0025 [−.0035, −.0014]): U **+.025 [+.007, +.043]**, p .006; nugget
-  +.023 [+.005, +.042], ref recall +.023 [+.004, +.042]; but cite_p −.023 [−.043, −.003].
-- By half: screened b4 − fixed in U is +.018 [−.007, +.043] on the first 90 (this pass) and
-  +.032 [+.007, +.057] on the new 90; screened b3 +.005 and +.018.
-- DS-base and simple RAG against `ctl_fixed`: U −.010 each (n.s.); DS-base nugget +.068 and
-  ref recall +.087, cite_p −.168, claim_support −.105.
+**Judge noise.** simple RAG's 90 identical texts, judged twice: the per-task difference has sd
+.071 in nugget coverage and .038 in cite_p (means −.004 and −.008). Differences of ±.01 in a
+90-task mean are within the judge's and the writer's run-to-run noise; the 90-task run's
+screened b3 − fixed b3 nugget, −.013, is +.005 on the same tasks here.
 
-**Judge noise.** simple RAG's 90 identical texts, judged twice: the per-task U difference has
-mean −.005 and sd .072 (cite_p sd .038). The 90-task run's ctl_screen − ctl_fixed U, −.008,
-re-measured on the same tasks here is +.005: differences of ±.01 in a 90-task mean are within the
-judge's and the writer's run-to-run noise.
-
-**Reading.** On 180 tasks, everything points the same way as the pre-registered run but tighter:
-the screener costs 36% less and is non-inferior in U and cite_p; spending the saving on a fourth
-batch gives higher U than the fixed rule at lower cost (+.025, the proposal's matched-cost
-criterion against the fixed rule), paid for partly in citation precision (−.023). This is
-exploratory (decided after the 90-task result, and the first 90 tasks are counted twice across the
-two runs); the confirmatory result remains the 90-task one above.
+**Reading.** On 180 tasks the screener again costs 36% less with every metric within noise of
+the fixed rule. Spending the saving on a fourth batch (screened b4, still 12% cheaper than fixed
+b3) is significantly more complete (nugget +.023, ref recall +.023) and less precise in its
+citations (cite_p −.023), with claim support unchanged: a completeness-for-precision trade at
+lower cost, not a gain on every metric. DS-base remains the most complete system (nugget +.045
+over screened b4) and the least reliable (cite_p −.146). This is exploratory (decided after the
+90-task result, and the first 90 tasks are counted twice across the two runs); the confirmatory
+result remains the 90-task one above.
 
 **Versions.** On branch `d1-screen` (from `read-action`). Every cell without `screener` keeps its
 identity (the pins in `tests/test_writing.py`); `tests/test_screen.py` covers the screener
