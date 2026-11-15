@@ -265,10 +265,11 @@ budget beats the fixed rule at matched cost (frontier.md), without a lower cite_
 
 **How results are reported here.** On the benchmark's own metrics, each separately: nugget
 coverage and reference recall (completeness), cite_p and claim support (citation reliability),
-claim coverage, and list cost per task. U (docs/04) is a project-made weighted sum used only as
-the training reward and for selecting among candidates; it has no external basis, so it is not
-used to state results. Where the test plan below named U (it was written before this rule), the
-U figure is given once, as registered, next to the original metrics.
+claim coverage, and list cost per task. These are primary. The team's registered utility U
+(docs/04; also the training reward and the selection score) is reported alongside, in the last
+column, as a secondary summary: its weights are the team's own (nugget dominates; cite_p and
+claim support add at most .10 each), so a U difference is read together with the metrics it
+combines, never instead of them.
 
 **June dev result** (run `eval-dev-screen`, job 33372245, 1 h 50 min; runs/eval-dev-screen/
 frontier.md). In the loop the screener behaves as offline: d1 decides 64% of the screened papers,
@@ -379,30 +380,30 @@ plus peak-hour holds; the job is resumable.
 job 33417440, judging job 33417446; DeepSeek-judged, non-official). On test, d1 decides 66% of the
 papers (3432 of 5186 in `ctl_screen`), as on dev (64%).
 
-| system | $/task | nugget | ref recall | cite_p | claim support | claim cov. |
-|---|---|---|---|---|---|---|
-| DS-base intro-only | .188 | .419 | .250 | .409 | .775 | .687 |
-| simple RAG k=20 | .003 | .351 | .114 | .477 | .823 | .719 |
-| fixed b3 | .0211 | .367 | .160 | .588 | .878 | .776 |
-| screened b3 | .0135 | .354 | .167 | .592 | .881 | .773 |
-| screened b4 | .0179 | .375 | .174 | .574 | .885 | .779 |
+| system | $/task | nugget | ref recall | cite_p | claim support | claim cov. | U |
+|---|---|---|---|---|---|---|---|
+| DS-base intro-only | .188 | .419 | .250 | .409 | .775 | .687 | .502 |
+| simple RAG k=20 | .003 | .351 | .114 | .477 | .823 | .719 | .496 |
+| fixed b3 | .0211 | .367 | .160 | .588 | .878 | .776 | .528 |
+| screened b3 | .0135 | .354 | .167 | .592 | .881 | .773 | .520 |
+| screened b4 | .0179 | .375 | .174 | .574 | .885 | .779 | .539 |
 
 Every pair, A − B (paired per task, 95% t-interval; * = interval excludes 0; ref recall on 83
 tasks with gold; a report with no citation to check scores 0 on the citation metrics, as in
 report.md):
 
-| A − B | nugget | ref recall | cite_p | claim support | claim cov. | $ |
-|---|---|---|---|---|---|---|
-| DS-base − simple RAG | +.068 [.032, .105]* | +.136 [.071, .201]* | −.068 [−.101, −.035]* | −.048 [−.080, −.017]* | −.033 [−.061, −.004]* | +.1851* |
-| DS-base − fixed b3 | +.052 [.009, .096]* | +.090 [.027, .154]* | −.179 [−.210, −.148]* | −.103 [−.131, −.076]* | −.090 [−.115, −.064]* | +.1671* |
-| DS-base − screened b3 | +.065 [.018, .112]* | +.083 [.022, .143]* | −.183 [−.212, −.154]* | −.106 [−.131, −.081]* | −.086 [−.111, −.062]* | +.1747* |
-| DS-base − screened b4 | +.044 [.007, .081]* | +.076 [.015, .138]* | −.165 [−.199, −.131]* | −.111 [−.133, −.089]* | −.092 [−.115, −.069]* | +.1702* |
-| simple RAG − fixed b3 | −.016 [−.050, .019] | −.046 [−.084, −.007]* | −.111 [−.140, −.082]* | −.055 [−.083, −.027]* | −.057 [−.084, −.030]* | −.0180* |
-| simple RAG − screened b3 | −.003 [−.039, .033] | −.053 [−.092, −.015]* | −.115 [−.147, −.083]* | −.057 [−.083, −.032]* | −.054 [−.079, −.029]* | −.0105* |
-| simple RAG − screened b4 | −.024 [−.050, .002] | −.060 [−.099, −.020]* | −.097 [−.130, −.064]* | −.062 [−.086, −.038]* | −.059 [−.084, −.035]* | −.0149* |
-| screened b3 − fixed b3 | −.013 [−.040, .015] | +.008 [−.008, .023] | +.004 [−.018, .027] | +.003 [−.014, .019] | −.003 [−.019, .013] | −.0076* |
-| screened b4 − fixed b3 | +.009 [−.022, .039] | +.014 [−.007, .034] | −.014 [−.043, .015] | +.007 [−.010, .024] | +.002 [−.015, .020] | −.0031* |
-| screened b4 − screened b3 | +.021 [−.005, .047] | +.006 [−.006, .018] | −.018 [−.047, .010] | +.005 [−.010, .020] | +.005 [−.010, .021] | +.0045* |
+| A − B | nugget | ref recall | cite_p | claim support | claim cov. | $ | U |
+|---|---|---|---|---|---|---|---|
+| DS-base − simple RAG | +.068 [.032, .105]* | +.136 [.071, .201]* | −.068 [−.101, −.035]* | −.048 [−.080, −.017]* | −.033 [−.061, −.004]* | +.1851* | +.007 [−.032, .045] |
+| DS-base − fixed b3 | +.052 [.009, .096]* | +.090 [.027, .154]* | −.179 [−.210, −.148]* | −.103 [−.131, −.076]* | −.090 [−.115, −.064]* | +.1671* | −.025 [−.070, .020] |
+| DS-base − screened b3 | +.065 [.018, .112]* | +.083 [.022, .143]* | −.183 [−.212, −.154]* | −.106 [−.131, −.081]* | −.086 [−.111, −.062]* | +.1747* | −.017 [−.065, .031] |
+| DS-base − screened b4 | +.044 [.007, .081]* | +.076 [.015, .138]* | −.165 [−.199, −.131]* | −.111 [−.133, −.089]* | −.092 [−.115, −.069]* | +.1702* | −.036 [−.074, .001] |
+| simple RAG − fixed b3 | −.016 [−.050, .019] | −.046 [−.084, −.007]* | −.111 [−.140, −.082]* | −.055 [−.083, −.027]* | −.057 [−.084, −.030]* | −.0180* | −.032 [−.067, .003] |
+| simple RAG − screened b3 | −.003 [−.039, .033] | −.053 [−.092, −.015]* | −.115 [−.147, −.083]* | −.057 [−.083, −.032]* | −.054 [−.079, −.029]* | −.0105* | −.024 [−.059, .011] |
+| simple RAG − screened b4 | −.024 [−.050, .002] | −.060 [−.099, −.020]* | −.097 [−.130, −.064]* | −.062 [−.086, −.038]* | −.059 [−.084, −.035]* | −.0149* | −.043 [−.070, −.016]* |
+| screened b3 − fixed b3 | −.013 [−.040, .015] | +.008 [−.008, .023] | +.004 [−.018, .027] | +.003 [−.014, .019] | −.003 [−.019, .013] | −.0076* | −.008 [−.035, .019] |
+| screened b4 − fixed b3 | +.009 [−.022, .039] | +.014 [−.007, .034] | −.014 [−.043, .015] | +.007 [−.010, .024] | +.002 [−.015, .020] | −.0031* | +.011 [−.019, .041] |
+| screened b4 − screened b3 | +.021 [−.005, .047] | +.006 [−.006, .018] | −.018 [−.047, .010] | +.005 [−.010, .020] | +.005 [−.010, .021] | +.0045* | +.019 [−.007, .045] |
 
 Against the pre-registered hypotheses:
 
@@ -416,7 +417,8 @@ Against the pre-registered hypotheses:
    not significant. (Registered U: +.011 [−.019, .041].)
 4. **Against DS-base (descriptive).** Every controller costs about a tenth of DS-base. DS-base is
    more complete (nugget +.044 to +.065, ref recall +.076 to +.090 over the controllers), and its
-   citations are much less reliable (cite_p −.165 to −.183, claim support −.103 to −.111).
+   citations are much less reliable (cite_p −.165 to −.183, claim support −.103 to −.111). On U
+   no difference is resolved (DS-base − screened b4 −.036 [−.074, .001]).
 
 **What the test shows.** The d1 screener's cost saving transfers to held-out tasks (−36% at the
 same number of batches) with no metric detectably lower. Spending the saving on a fourth batch
@@ -435,26 +437,26 @@ generations repeated byte for byte (simple RAG 90/90, the controllers 45-60/90, 
 this run is a second, independent pass over the first 90 plus the 90 new tasks, not the 90-task
 run extended.
 
-| system | $/task | nugget | ref recall | cite_p | claim support | claim cov. |
-|---|---|---|---|---|---|---|
-| DS-base intro-only | .191 | .432 | .230 | .413 | .776 | .686 |
-| simple RAG k=20 | .003 | .368 | .117 | .466 | .831 | .718 |
-| fixed b3 | .0210 | .364 | .143 | .582 | .881 | .767 |
-| screened b3 | .0133 | .372 | .148 | .586 | .877 | .770 |
-| screened b4 | .0185 | .387 | .166 | .559 | .879 | .776 |
+| system | $/task | nugget | ref recall | cite_p | claim support | claim cov. | U |
+|---|---|---|---|---|---|---|---|
+| DS-base intro-only | .191 | .432 | .230 | .413 | .776 | .686 | .512 |
+| simple RAG k=20 | .003 | .368 | .117 | .466 | .831 | .718 | .513 |
+| fixed b3 | .0210 | .364 | .143 | .582 | .881 | .767 | .522 |
+| screened b3 | .0133 | .372 | .148 | .586 | .877 | .770 | .534 |
+| screened b4 | .0185 | .387 | .166 | .559 | .879 | .776 | .547 |
 
-| A − B (180 tasks; ref recall 168) | nugget | ref recall | cite_p | claim support | claim cov. | $ |
-|---|---|---|---|---|---|---|
-| DS-base − simple RAG | +.064 [.042, .087]* | +.113 [.070, .156]* | −.053 [−.075, −.030]* | −.054 [−.074, −.035]* | −.033 [−.052, −.014]* | +.1882* |
-| DS-base − fixed b3 | +.068 [.042, .095]* | +.087 [.047, .126]* | −.168 [−.190, −.147]* | −.105 [−.123, −.087]* | −.081 [−.099, −.063]* | +.1702* |
-| DS-base − screened b3 | +.061 [.034, .087]* | +.082 [.042, .121]* | −.173 [−.194, −.152]* | −.101 [−.118, −.084]* | −.084 [−.102, −.066]* | +.1779* |
-| DS-base − screened b4 | +.045 [.019, .070]* | +.064 [.024, .104]* | −.146 [−.168, −.123]* | −.103 [−.120, −.086]* | −.090 [−.108, −.073]* | +.1727* |
-| simple RAG − fixed b3 | +.004 [−.018, .026] | −.026 [−.057, .004] | −.116 [−.137, −.094]* | −.051 [−.068, −.033]* | −.048 [−.066, −.030]* | −.0179* |
-| simple RAG − screened b3 | −.004 [−.025, .018] | −.031 [−.063, .000] | −.120 [−.142, −.098]* | −.047 [−.065, −.029]* | −.051 [−.070, −.033]* | −.0102* |
-| simple RAG − screened b4 | −.019 [−.038, −.001]* | −.049 [−.084, −.014]* | −.093 [−.115, −.070]* | −.049 [−.066, −.032]* | −.058 [−.075, −.040]* | −.0155* |
-| screened b3 − fixed b3 | +.008 [−.009, .024] | +.005 [−.006, .016] | +.005 [−.011, .021] | −.004 [−.017, .008] | +.003 [−.010, .016] | −.0077* |
-| screened b4 − fixed b3 | +.023 [.005, .042]* | +.023 [.004, .042]* | −.023 [−.043, −.003]* | −.002 [−.014, .010] | +.009 [−.003, .022] | −.0025* |
-| screened b4 − screened b3 | +.016 [−.001, .033] | +.018 [.003, .033]* | −.028 [−.046, −.009]* | +.002 [−.011, .015] | +.006 [−.007, .020] | +.0053* |
+| A − B (180 tasks; ref recall 168) | nugget | ref recall | cite_p | claim support | claim cov. | $ | U |
+|---|---|---|---|---|---|---|---|
+| DS-base − simple RAG | +.064 [.042, .087]* | +.113 [.070, .156]* | −.053 [−.075, −.030]* | −.054 [−.074, −.035]* | −.033 [−.052, −.014]* | +.1882* | .000 [−.024, .023] |
+| DS-base − fixed b3 | +.068 [.042, .095]* | +.087 [.047, .126]* | −.168 [−.190, −.147]* | −.105 [−.123, −.087]* | −.081 [−.099, −.063]* | +.1702* | −.010 [−.036, .016] |
+| DS-base − screened b3 | +.061 [.034, .087]* | +.082 [.042, .121]* | −.173 [−.194, −.152]* | −.101 [−.118, −.084]* | −.084 [−.102, −.066]* | +.1779* | −.021 [−.048, .005] |
+| DS-base − screened b4 | +.045 [.019, .070]* | +.064 [.024, .104]* | −.146 [−.168, −.123]* | −.103 [−.120, −.086]* | −.090 [−.108, −.073]* | +.1727* | −.035 [−.061, −.009]* |
+| simple RAG − fixed b3 | +.004 [−.018, .026] | −.026 [−.057, .004] | −.116 [−.137, −.094]* | −.051 [−.068, −.033]* | −.048 [−.066, −.030]* | −.0179* | −.010 [−.032, .013] |
+| simple RAG − screened b3 | −.004 [−.025, .018] | −.031 [−.063, .000] | −.120 [−.142, −.098]* | −.047 [−.065, −.029]* | −.051 [−.070, −.033]* | −.0102* | −.021 [−.042, .001] |
+| simple RAG − screened b4 | −.019 [−.038, −.001]* | −.049 [−.084, −.014]* | −.093 [−.115, −.070]* | −.049 [−.066, −.032]* | −.058 [−.075, −.040]* | −.0155* | −.035 [−.054, −.015]* |
+| screened b3 − fixed b3 | +.008 [−.009, .024] | +.005 [−.006, .016] | +.005 [−.011, .021] | −.004 [−.017, .008] | +.003 [−.010, .016] | −.0077* | +.011 [−.005, .027] |
+| screened b4 − fixed b3 | +.023 [.005, .042]* | +.023 [.004, .042]* | −.023 [−.043, −.003]* | −.002 [−.014, .010] | +.009 [−.003, .022] | −.0025* | +.025 [.007, .043]* |
+| screened b4 − screened b3 | +.016 [−.001, .033] | +.018 [.003, .033]* | −.028 [−.046, −.009]* | +.002 [−.011, .015] | +.006 [−.007, .020] | +.0053* | +.014 [−.003, .031] |
 
 **Judge noise.** simple RAG's 90 identical texts, judged twice: the per-task difference has sd
 .071 in nugget coverage and .038 in cite_p (means −.004 and −.008). Differences of ±.01 in a
@@ -466,7 +468,10 @@ the fixed rule. Spending the saving on a fourth batch (screened b4, still 12% ch
 b3) is significantly more complete (nugget +.023, ref recall +.023) and less precise in its
 citations (cite_p −.023), with claim support unchanged: a completeness-for-precision trade at
 lower cost, not a gain on every metric. DS-base remains the most complete system (nugget +.045
-over screened b4) and the least reliable (cite_p −.146). This is exploratory (decided after the
+over screened b4) and the least reliable (cite_p −.146). On U, screened b4 is higher than fixed
+b3 (+.025 [.007, .043]), the matched-cost hypothesis 3 that the 90-task test did not show, and
+higher than DS-base (DS-base − screened b4 −.035 [−.061, −.009]); the other controllers are
+within noise of DS-base on U. This is exploratory (decided after the
 90-task result, and the first 90 tasks are counted twice across the two runs); the confirmatory
 result remains the 90-task one above.
 
