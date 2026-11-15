@@ -2,14 +2,16 @@
 with which search to run next, or whether to stop, decided by a policy (controller/policy.py).
 
 At each retrieval decision the candidates are the next batch of the abstract search (the target
-paper's abstract as one BM25 query, read PAGE new papers at a time down its ranked list), one
+paper's abstract as one BM25 query, read PAGE new papers at a time down its ranked list; on a
+benchmark without abstracts its `search_seed`, e.g. DRB2's research request), one
 keyword query the executor proposes, the next new page of the most productive keyword query
 (`deepen`), and `finish`; their pages are fetched first (local arXiv, at its nominal tool price).
 A chosen search screens its new papers with DS-base's CoT sem_filter, whose requests are DS-base's
 own for the same paper and task, so a paired DS-base run's cached verdicts replay. After `finish`
 the relevant papers are ranked with DS-base's sem_topk when there are more than WRITE_DOCS
 (seeded per task, so every branch from one state ranks alike), and DS-base's intro writer writes
-the section from them with the citation repair (P10) and no background. The hard rules
+the section from them with the citation repair (P10) and no background (on every benchmark, as
+the DS-base baseline it is compared with writes). The hard rules
 (controller/state.py) keep the candidates a policy may choose; a single legal one is executed as
 forced. `actions` removes searches from the offer (an ablation).
 
@@ -65,7 +67,7 @@ import numpy as np
 import pandas as pd
 from pydantic import Field, SerializerFunctionWrapHandler, model_serializer
 
-from jevscholar import paths
+from jevscholar import benchmarks, paths
 from jevscholar.artifacts import task_dir
 from jevscholar.controller.policy import Decision, Policy, make_policy
 from jevscholar.controller.prompt import label
@@ -120,6 +122,18 @@ Searches so far (new papers, relevant):
 
 Relevant papers found so far:
 {titles}"""
+PROPOSE_REPORT = """You are searching arXiv for the sources needed to write the research report
+requested in the task below. Write one new English search query (3-10 keywords) that would find
+relevant papers the searches so far have missed. Output the query only, nothing else.
+
+Task:
+{topic}
+
+Searches so far (new papers, relevant):
+{searches}
+
+Relevant papers found so far:
+{titles}"""  # every benchmark but DeepScholar-Bench, whose tasks are related-work sections
 LIST_ITEM = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 REVISE = {
     "ground": "Revision for citation accuracy: rewrite the existing section so that every sentence "
@@ -225,7 +239,8 @@ class Controlled(System):
         take = None if p.start is None else p.start.take
         writing = p.start is not None and p.start.revision is not None
         if p.start is None:
-            state = State(task.prompt, budget, task.meta.get("abstract", ""), p.max_batches)
+            seed = benchmarks.get(task.bench).search_seed(task)
+            state = State(task.prompt, budget, seed, p.max_batches)
             first, pages = None, {}
         else:
             point = locate_write(task, p.start) if writing else locate(task, p.start)
@@ -486,7 +501,8 @@ class Loop:
             f"- {label(state, q.text)} ({q.new}, {q.relevant})" for q in state.queries
         )
         titles = "\n".join(f"- {p.row['title']}" for p in state.relevant()[-20:])
-        prompt = PROPOSE.format(
+        template = PROPOSE if self.ctx.task.bench == "deepscholar" else PROPOSE_REPORT
+        prompt = template.format(
             topic=state.topic, searches=searches or "(none)", titles=titles or "(none)"
         )
         reply = await chat(self.ctx, "propose", prompt, max_tokens=PROPOSE_TOKENS)

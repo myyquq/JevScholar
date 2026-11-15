@@ -269,3 +269,17 @@ def test_the_full_test_run_extends_the_frozen_one():
     assert (cell.split, cell.limit) == ("test", 180) and cell.systems == frozen.systems
     for system in frozen.systems:
         assert full.system_spec(system) == first.system_spec(system)
+
+
+def test_the_drb2_check_runs_the_frozen_test_systems_on_drb2_only():
+    from jevscholar.config import load_experiment
+    from jevscholar.paths import EXPERIMENTS
+
+    drb2 = load_experiment(EXPERIMENTS / "evaluate.yaml", "drb2-test")
+    test = load_experiment(EXPERIMENTS / "evaluate.yaml", "test-screen")
+    assert list(drb2.benchmarks) == ["drb2"]  # the base's DeepScholar cell is dropped
+    cell, frozen = drb2.benchmarks["drb2"], test.benchmarks["deepscholar"]
+    assert (cell.split, cell.limit) == ("test", 12) and cell.systems == frozen.systems
+    assert drb2.search.corpora == ("arxiv",)
+    for system in frozen.systems:
+        assert drb2.system_spec(system) == test.system_spec(system)

@@ -9,6 +9,7 @@ import json
 import logging
 import threading
 from collections.abc import Iterator
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -340,7 +341,7 @@ def gateway(tmp_path: Path) -> Iterator[Gateway]:
         tools={"d1_choice": 0.00002},
         free_tools=("d1_choice",),
     )
-    caps = {("deepscholar", "controlled"): 1.0}
+    caps = {("deepscholar", "controlled"): 1.0, ("drb2", "controlled"): 1.0}
     gw = Gateway(models, tmp_path / "run", Budget(), caps, secrets={}, cache_dir=tmp_path)
     gw.start()
     yield gw
@@ -402,6 +403,28 @@ def test_fixed_policy_searches_then_writes(gateway, lotus_fakes, tmp_path):
     assert (report.meta["batches"], report.meta["relevant"]) == (2, 10)
     assert 0 < report.meta["spent_usd"] == pytest.approx(ctx.usage()["spent_usd"])
     assert report.meta["docs"] == state.docs and len(state.docs) == 10
+
+
+def test_on_drb2_the_first_search_is_the_request_and_proposals_ask_for_a_report(
+    gateway, lotus_fakes, tmp_path
+):
+    """No abstract: the seed query is the research request without its forbidden-article rule,
+    and the executor proposes queries for a report, not a related-work section."""
+    from jevscholar.benchmarks.drb2 import RULE
+
+    request = "Write a report on graph agents plan"
+    prompt = request + RULE + "The following is a rule: do not view {'title': 'X'}.**"
+    out = tmp_path / "d1"
+    ctx = replace(make_ctx(gateway, out), task=Task("drb2", out.name, prompt))
+    system = Controlled(
+        {"budget_usd": 1.0, "policy": {"kind": "fixed"}, "costs": COSTS, "max_batches": 2}
+    )
+    asyncio.run(system.run(ctx))
+    state = State.from_json((out / "state.json").read_text())
+    assert [q.text for q in state.queries] == [request, "query 2a"]
+    proposals = ScriptedUpstream.prompts
+    assert proposals and all("the research report" in p for p in proposals)
+    assert not any("related-work" in p for p in proposals)
 
 
 def test_rules_end_the_loop_within_budget(gateway, lotus_fakes, tmp_path):

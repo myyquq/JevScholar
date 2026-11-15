@@ -565,6 +565,33 @@ A small check that the controller transfers to broader research reports:
 - **Reading.** Six tasks are a transfer diagnostic, not evidence of competitiveness. An arXiv-only
   fallback must be labelled as such.
 
+**As built: the arXiv-only check** (variant `drb2-test`, run `eval-drb2-test`; decided 11-15,
+before any DRB2 test call). The web access above needs a Tavily key and a per-task web counter
+that were never built, so this is the arXiv-only fallback, labelled as such.
+
+- **Tasks.** DRB2 test[:12]: 6 en, 6 zh, never used before (the split prefix, fixed before any
+  call). Requests whose own text names the forbidden article (one in 120, task 58) are not among
+  them.
+- **Systems.** The frozen test-screen systems unchanged: DS-base intro-only, simple RAG k=20,
+  fixed b3, screened b3, screened b4 (adapter 0ec04682, delta .7), two writer samples each,
+  arXiv only for every system. The controllers plan within DRB2's B0 ($0.34); DS-base runs at
+  its natural cost.
+- **The controller on DRB2.** Its first search (the `abstract` slot) is the research request:
+  the prompt without its forbidden-article rule (`DRB2.search_seed`; the rule names the article,
+  so the access policy would block the whole prompt as a query). Proposals ask for an English
+  query for "the research report requested" instead of a related-work section. Everything else
+  is as on DeepScholar: DS-base's screening, ranking and intro writer, which is also what the
+  DS-base baseline writes with. DeepScholar cells keep their identities (`tests/test_writing.py`).
+- **Metrics.** DRB2's own: total (primary), info recall, analysis, presentation, judged by
+  `ds-judge-think` (docs/02), plus list cost; the team's U is not defined on DRB2 and is not used.
+  Every pair as on the DeepScholar test, 95% t-intervals over 12 tasks.
+- **Reading.** Twelve tasks, arXiv only, on a benchmark whose topics are mostly not on arXiv
+  (finance, history, games ...): a transfer diagnostic of whether the cost saving and the ordering
+  of the systems carry over, not evidence of competitiveness. d1 was trained on DeepScholar
+  topics, so its share of decisions may drop.
+- **Expected cost.** About $10 list for generation (DS-base ~$0.25-0.45 a task) and $2 for
+  judging; about half billed off-peak. The campaign cap is $45, of which $32.31 is spent.
+
 ## Schedule
 
 | Week | Work |

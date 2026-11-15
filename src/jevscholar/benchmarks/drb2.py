@@ -5,6 +5,10 @@ article; here the same rule is also enforced at the tool level for every system 
 URLs, canonicalised, the arXiv ids they contain, so mirrors and arXiv search are covered too, and
 the article's title). There is no date cutoff, as in the official protocol. Exports are
 `idx-<n>.md`, the official evaluator's input layout.
+
+The controller's first query (`search_seed`) is the research request without that rule: every
+prompt ends with it (RULE onwards), and it names the forbidden article, so the access policy
+would block the whole prompt as a query.
 """
 
 from __future__ import annotations
@@ -19,6 +23,16 @@ from jevscholar.render import drb2_report
 from jevscholar.search.policy import arxiv_id, canonical_url, norm_title
 from jevscholar.types import AccessPolicy, Benchmark, EvalContext, Task, TaskResult
 from jevscholar.util import read_json, read_jsonl
+
+RULE = "\n\n**important**"  # the forbidden-article rule every prompt ends with
+
+
+def request(prompt: str) -> str:
+    """The research request: the prompt before its forbidden-article rule."""
+    head, sep, _ = prompt.rpartition(RULE)
+    if not sep:
+        raise ValueError("a DRB2 prompt without its forbidden-article rule")
+    return head.strip()
 
 
 @cache
@@ -37,6 +51,9 @@ class DRB2(Benchmark):
 
     def gold(self, task: Task) -> Any:
         return _rows()[task.id]
+
+    def search_seed(self, task: Task) -> str:
+        return request(task.prompt)
 
     def _task(self, t: dict[str, Any]) -> Task:
         blocked = t["content"].get("blocked") or {}

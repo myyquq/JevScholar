@@ -88,6 +88,18 @@ variants:
         split: test
         limit: 180
         systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
+  drb2-test:  # transfer check (docs/06: DRB2 transfer check): the frozen test-screen systems on
+    # 12 fresh DRB2 test tasks (6 en, 6 zh), arXiv only for every system, two writer samples
+    # (VARIANT=drb2-test RUN=eval-drb2-test JUDGE=0 sbatch scripts/screen_dev.sh, then
+    #  RUN=eval-drb2-test FRONTIER=0 scripts/judge.sh as a CPU job)
+    budget: {run_usd: 8.0, judge_run_usd: 4.0}
+    benchmarks:
+      deepscholar: null
+      drb2:
+        split: test
+        limit: 12
+        samples: 2
+        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
   replay:  # $0 check: the baselines regenerate from the replay cache, byte-identical
     replay_only: true
     offpeak_only: false

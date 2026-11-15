@@ -248,6 +248,11 @@ class Benchmark:
         an eval file's fingerprint, so a changed gold set is judged again."""
         raise NotImplementedError
 
+    def search_seed(self, task: Task) -> str:
+        """The controller's first query (its `abstract` search, docs/05): the task's abstract
+        where it has one, else "" (no such search is offered)."""
+        return task.meta.get("abstract", "")
+
     def undefined(self, task: Task) -> set[str]:
         """Metrics that do not exist for the task (left out of its means and comparisons)."""
         return set()
