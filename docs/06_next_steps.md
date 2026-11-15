@@ -389,6 +389,45 @@ whole test split, to see how tight the U interval of hypothesis 2 gets; the firs
 from the DeepSeek and judge caches, so the new spend is about the 90-task run's (~$7 billed
 generation, ~$7 judging). Reported with the same paired analysis, as exploratory.
 
+**Exploratory result** (`eval-test-screen-180`; GPU jobs 33434901, cancelled, and 33440489,
+judging job 33440494, 7:12; billed $7.41 generation, $5.11 judging). The first 90 tasks did
+**not** replay exactly: the judge cache was not hit (every task re-judged), and only part of the
+generations repeated byte for byte (simple RAG 90/90, the controllers 45-60/90, DS-base 0/90). So
+this run is a second, independent pass over the first 90 plus the 90 new tasks, not the 90-task
+run extended.
+
+| system | cost $/task | U | nugget | ref recall | cite_p | claim_support |
+|---|---|---|---|---|---|---|
+| DS-base intro-only | .187 | .512 | .432 | .230 | .413 | .776 |
+| simple RAG k=20 | .003 | .512 | .368 | .117 | .466 | .830 |
+| fixed b3 | .0210 | .522 | .364 | .143 | .582 | .881 |
+| screened b3 | .0133 | .534 | .372 | .148 | .586 | .877 |
+| screened b4 | .0185 | .548 | .387 | .166 | .559 | .879 |
+
+Paired against `ctl_fixed`, 180 tasks:
+
+- screened b3: cost −$.0077 [−.0080, −.0074]; U +.011 [−.005, +.027]; cite_p +.005
+  [−.011, +.021]; claim_support −.004 [−.017, +.008]. With the hypothesis-2 margins, both lower
+  bounds now clear (U −.005 > −.03, cite_p −.011 > −.05).
+- screened b4 (cheaper by $.0025 [−.0035, −.0014]): U **+.025 [+.007, +.043]**, p .006; nugget
+  +.023 [+.005, +.042], ref recall +.023 [+.004, +.042]; but cite_p −.023 [−.043, −.003].
+- By half: screened b4 − fixed in U is +.018 [−.007, +.043] on the first 90 (this pass) and
+  +.032 [+.007, +.057] on the new 90; screened b3 +.005 and +.018.
+- DS-base and simple RAG against `ctl_fixed`: U −.010 each (n.s.); DS-base nugget +.068 and
+  ref recall +.087, cite_p −.168, claim_support −.105.
+
+**Judge noise.** simple RAG's 90 identical texts, judged twice: the per-task U difference has
+mean −.005 and sd .072 (cite_p sd .038). The 90-task run's ctl_screen − ctl_fixed U, −.008,
+re-measured on the same tasks here is +.005: differences of ±.01 in a 90-task mean are within the
+judge's and the writer's run-to-run noise.
+
+**Reading.** On 180 tasks, everything points the same way as the pre-registered run but tighter:
+the screener costs 36% less and is non-inferior in U and cite_p; spending the saving on a fourth
+batch gives higher U than the fixed rule at lower cost (+.025, the proposal's matched-cost
+criterion against the fixed rule), paid for partly in citation precision (−.023). This is
+exploratory (decided after the 90-task result, and the first 90 tasks are counted twice across the
+two runs); the confirmatory result remains the 90-task one above.
+
 **Versions.** On branch `d1-screen` (from `read-action`). Every cell without `screener` keeps its
 identity (the pins in `tests/test_writing.py`); `tests/test_screen.py` covers the screener
 offline.
