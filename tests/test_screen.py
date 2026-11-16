@@ -27,10 +27,12 @@ def paper(pid: str, relevant: bool | None) -> dict:
 @pytest.fixture
 def logged(tmp_path, monkeypatch) -> tuple[Path, Path]:
     """Two runs over a train, a dev and a test task; the train task's papers seen twice (no val
-    task: its files are empty). A third, screened by d1 (r0), is left out."""
+    task: its files are empty). Two more, screened by d1 (r0's screens.jsonl, a3's manifest), are
+    left out; r1's manifest sets no screener."""
     runs, raw = tmp_path / "runs", tmp_path / "raw"
     states = {
-        ("r0", "2501.00001v1"): [paper("1111.0001", False)],  # d1's verdict
+        ("r0", "2501.00001v1"): [paper("1111.0001", False)],  # d1's verdict (screens.jsonl)
+        ("a3", "2501.00001v1"): [paper("1111.0002", True)],  # d1's verdict (its cell's `screen`)
         ("r1", "2501.00001v1"): [paper("1111.0001", True), paper("1111.0002", False)],
         ("r2", "2501.00001v1"): [paper("1111.0002", False), paper("1111.0003", None)],
         ("r1", "2502.00002v1"): [paper("2201.00001", False)],
@@ -41,6 +43,10 @@ def logged(tmp_path, monkeypatch) -> tuple[Path, Path]:
         folder.mkdir(parents=True)
         (folder / "state.json").write_text(json.dumps({"topic": f"topic {task}", "papers": papers}))
     (runs / "r0" / "deepscholar" / "ctl" / "tasks" / "2501.00001v1" / "screens.jsonl").touch()
+    for run, spec in (("r1", {"screener": None}), ("a3", {"screen": {"threshold": 0.3}})):
+        systems = {"ctl": {"use": "controlled", **spec}}
+        (runs / run).mkdir(exist_ok=True)
+        (runs / run / "manifest.json").write_text(json.dumps({"experiment": {"systems": systems}}))
     (raw / "jun2025").mkdir(parents=True)
     (raw / "jun2025" / "recovered_citations.csv").write_text(
         "parent_paper_arxiv_id,cited_paper_arxiv_link\n"

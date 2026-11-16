@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from jevscholar import paths
+from jevscholar.artifacts import read_manifest
 from jevscholar.controller.d1 import Example, write_examples
 from jevscholar.search.policy import arxiv_id
 from jevscholar.util import read_jsonl, write_jsonl
@@ -83,11 +84,17 @@ def splits() -> dict[str, str]:
 
 def verdicts(runs: Path) -> list[dict[str, Any]]:
     """Every (task, paper) screening verdict in the runs' final states, once each, in a fixed
-    order (task, then first appearance). A task screened by d1 (its screens.jsonl) is left out:
-    d1 made some of its verdicts."""
+    order (task, then first appearance). A task d1 screened is left out, since d1 made some of
+    its verdicts: its folder has screens.jsonl, or its cell's parameters in the run's manifest set
+    `screener` or `screen` (d1's threshold filter)."""
     seen: dict[tuple[str, str], dict[str, Any]] = {}
+    screened: dict[Path, set[str]] = {}
     for path in sorted(runs.glob("*/deepscholar/*/tasks/*/state.json")):
-        if (path.parent / "screens.jsonl").exists():
+        run, system = path.parents[4], path.parents[2].name
+        if run not in screened:
+            systems = read_manifest(run).get("experiment", {}).get("systems", {})
+            screened[run] = {n for n, s in systems.items() if s.get("screen") or s.get("screener")}
+        if system in screened[run] or (path.parent / "screens.jsonl").exists():
             continue
         task, s = path.parent.name, json.loads(path.read_text())
         for p in s["papers"]:

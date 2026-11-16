@@ -24,11 +24,11 @@ times less per paper. If d1 screened as well as the executor, the fixed rule at 
 `sem_filter` reads; the question is `sem_filter`'s own, as a choice between `relevant` and `not
 relevant`; the target is the executor's verdict at 0.9, a soft label, since the teacher is not
 ground truth. Each (task, paper) pair appears once, the first verdict logged. Tasks keep their
-benchmark split: train tasks train, val tasks choose the checkpoint and the cascade threshold,
-June dev tasks are the check; test tasks never appear. A task folder that d1 screened
-(`screens.jsonl`) is left out, so d1's own decisions never become labels. Every example's meta
-(task, split, URL, the executor's verdict, whether the target paper cites it) is written beside
-it.
+benchmark split: train tasks train, val tasks choose the checkpoint and the cascade threshold, June
+dev tasks are the check; test tasks never appear. A cell whose parameters give d1 a screening role
+(`screener`, or `screen`, d1's threshold filter) is left out, as its run's manifest records it, so
+d1's own decisions never become labels. Every example's meta (task, split, URL, the executor's
+verdict, whether the target paper cites it) is written beside it.
 
 The adapter below was trained on 3,143 train verdicts, its threshold chosen on 821 val verdicts
 (38 of cited papers), and it was checked on 1,781 June dev verdicts (54 of cited papers). The
