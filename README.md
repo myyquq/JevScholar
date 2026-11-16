@@ -72,7 +72,6 @@ the controllers have a per-task cap, while DeepScholar-base runs at its natural 
 | [docs/05_controller.md](docs/05_controller.md) | the controlled loop, its actions and rules, the policies, results |
 | [docs/06_training_and_test.md](docs/06_training_and_test.md) | the conditions of every comparison, training d1 (SFT and RL), the val gate, the final test, the decision headroom, DraftRef, the two DRB2 transfer checks, the research question, limitations and risks |
 | [docs/07_screener.md](docs/07_screener.md) | d1 as the relevance screener: its labels, offline scoring, the cascade in the loop, development results and its registered test |
-| [docs/final_report.pdf](docs/final_report.pdf) | the course's final report (source: docs/final_report.tex) |
 | [docs/usage.md](docs/usage.md) | setup, commands, configuration, layout, reproducibility, run index |
 
 ## Quick start
