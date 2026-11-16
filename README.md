@@ -1,13 +1,14 @@
 # JevScholar
 
-A deep-research system whose retrieval is steered by a small decision model. At each step,
-LiquidAI/d1-3B chooses which search to screen next (the paper's abstract as a query, a keyword
-query the executor proposes, the next page of a productive query) or decides to stop and write.
-Everything else is DeepScholar-base's own: its relevance filter, ranking and section writer. The
-goal is DeepScholar-base's report quality on DeepScholar-Bench at a fraction of its cost, with
-DeepResearch Bench II as a transfer check. Every system runs on the same executor,
-DeepSeek-V4.1-Flash, with the same tools and access policy; the controllers have a per-task cap,
-while DeepScholar-base runs at its natural cost.
+A deep-research system in which a small decision model, LiquidAI/d1-3B, takes decisions over from
+the executor. As a controller, d1 chooses which search to screen next (the paper's abstract as a
+query, a keyword query the executor proposes, the next page of a productive query) or decides to
+stop and write. As a screener, it decides which retrieved papers are relevant, in place of the
+executor's per-paper calls. Everything else is DeepScholar-base's own: its relevance filter (for the
+papers d1 leaves to it), ranking and section writer. The goal is DeepScholar-base's report quality
+on DeepScholar-Bench at a fraction of its cost, with DeepResearch Bench II as a transfer check.
+Every system runs on the same executor, DeepSeek-V4.1-Flash, with the same tools and access policy;
+the controllers have a per-task cap, while DeepScholar-base runs at its natural cost.
 
 ## Results
 
@@ -19,7 +20,9 @@ while DeepScholar-base runs at its natural cost.
 - **A low-cost backbone.** DeepSeek-V4.1-Flash scores close to the paper's models under
   the paper's protocol at about a seventh of GPT-4.1's cost; DeepSeek judges agree with the
   official OpenAI judges on the checked citation and rubric judgments (item κ 0.74–0.93) but not
-  on organization (docs/02). All DeepSeek results come from one pinned model version (docs/02).
+  on organization (docs/02). The DeepSeek results come from one pinned model version, except
+  the runs of the screener, the decision headroom and the arXiv-only DRB2 check, whose version
+  was not recorded (docs/02).
 - **The controller.** d1 (no weight update) costs 26–28% of DeepScholar-base, writes
   better-supported sections (claim support +0.10 on June, +0.13 on Nov dev) and finds about as
   many important citations. Its coverage of the reference content is within noise of DS-base's
@@ -36,6 +39,18 @@ while DeepScholar-base runs at its natural cost.
   but its nugget coverage is lower (−0.053 [−0.073, −0.033]) and its reference recall misses the
   margin (−0.031 [−0.062, 0.000]). The RL claim fails too, and on six DRB2 tasks no system's score
   differs resolvably from DeepScholar-base's.
+- **Decision headroom** (docs/06). Oracles that choose per task on the fixed rule's own episodes,
+  cross-fitted on two writer samples, gain nothing resolvable from when to stop (U +0.011
+  [−0.036, 0.057] on June dev), how to revise the draft (+0.001) or whether to read the
+  documents' full text (+0.010 [−0.013, 0.032]): no decision of the loop leaves a controller
+  resolvable room to beat the fixed rule.
+- **d1 as screener** (docs/07). Trained on the executor's logged relevance verdicts, d1 decides
+  about two thirds of the papers in a cascade and leaves the rest to the executor, keeping as many
+  cited papers. In the fixed rule's loop on the first 90 test tasks it cuts the cost by 36%
+  (registered, holds), with every benchmark metric within noise; the registered non-inferiority in
+  U is not shown (−0.008 [−0.035, 0.019] against a −0.03 margin). Those tasks had been used by
+  the main test. On 12 DRB2 tasks with arXiv only, the saving carries over, but the controllers
+  score below DeepScholar-base and Simple RAG.
 - **DraftRef** (docs/06) is DeepScholar-base whose writer gets the papers its own search draft
   names, with d1 in place of its relevance filter; it submits the best of four writer samples,
   while DeepScholar-base is the mean of two. On the 180 test tasks it costs 41% of
@@ -55,7 +70,8 @@ while DeepScholar-base runs at its natural cost.
 | [docs/03_baselines_and_metrics.md](docs/03_baselines_and_metrics.md) | DeepScholar-base's defects and repairs, the evaluation's defects, the added metrics and their formulas, baseline results |
 | [docs/04_data_and_evaluation.md](docs/04_data_and_evaluation.md) | datasets and splits, the evaluation flow, scoring and statistics, cost accounting |
 | [docs/05_controller.md](docs/05_controller.md) | the controlled loop, its actions and rules, the policies, results |
-| [docs/06_training_and_test.md](docs/06_training_and_test.md) | the conditions of every comparison, training d1 (SFT and RL), the val gate, the final test, DraftRef, the DRB2 transfer check, the research question, limitations and risks |
+| [docs/06_training_and_test.md](docs/06_training_and_test.md) | the conditions of every comparison, training d1 (SFT and RL), the val gate, the final test, the decision headroom, DraftRef, the two DRB2 transfer checks, the research question, limitations and risks |
+| [docs/07_screener.md](docs/07_screener.md) | d1 as the relevance screener: its labels, offline scoring, the cascade in the loop, development results and its registered test |
 | [docs/final_report.pdf](docs/final_report.pdf) | the course's final report (source: docs/final_report.tex) |
 | [docs/usage.md](docs/usage.md) | setup, commands, configuration, layout, reproducibility, run index |
 

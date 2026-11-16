@@ -186,7 +186,7 @@ variants:
     budget: {run_usd: 1.0, judge_run_usd: 1.0}
     benchmarks:
       deepscholar: {split: test, limit: 90, samples: 1, systems: [closed_book]}
-  test-screen:  # the held-out confirmation of the d1 screener (docs/07_screener.md), frozen:
+  test-screen:  # the d1 screener's registered test (docs/07_screener.md), frozen:
     # adapter 0ec04682, delta .7, as on dev; 90 test tasks, two writer samples
     budget: {run_usd: 20.0, judge_run_usd: 8.0}
     benchmarks:
@@ -195,7 +195,7 @@ variants:
         limit: 90
         systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
   drb2-test:  # transfer check (docs/06_training_and_test.md): the frozen test-screen systems on
-    # 12 fresh DRB2 test tasks (6 en, 6 zh), arXiv only for every system, two writer samples
+    # DRB2 test[:12] (6 en, 6 zh; the first six are drb2.yaml's), arXiv only, two writer samples
     budget: {run_usd: 8.0, judge_run_usd: 4.0}
     benchmarks:
       deepscholar: null

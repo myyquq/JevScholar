@@ -36,6 +36,8 @@ environment, `.venv-train`. `scripts/train_env.sh` runs any command there.
 uv run jev data fetch [--pin]          # download pinned sources into data/raw/, verify sha256
 uv run jev data prepare                # data/derived/ and the committed data/splits/
 uv run jev data arxiv-index            # the local BM25 arXiv index
+uv run jev data fulltext RUN...        # the runs' writer documents' full text (arXiv PDFs), into
+                                       # cache/fulltext/, for the reading revisions (docs/06)
 
 # runs: RUN is a run id under runs/, or a path
 uv run jev run EXPERIMENT [--variant V] [--set a.b=value] [--only BENCH] [--run-id RUN]
@@ -76,6 +78,14 @@ uv run jev controller sanity-data DIR                     # the training-loop ch
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
                                          [--points FILE.points.jsonl]   # with regret, for the gate
+uv run jev controller frontier RUN                        # d1 or screened cells against the fixed
+                                                          # rule's cost-quality curve (docs/07)
+uv run jev controller headroom RUN [--metric M ...]       # cross-fitted per-task oracle over a
+                                                          # run's fixed choices (docs/06)
+uv run jev controller screen-data DIR                     # d1 screening examples from the runs'
+                                                          # logged verdicts (docs/07)
+scripts/train_env.sh jev controller screen-eval DATA.jsonl --out FILE [--adapter DIR]
+                                       # d1 as the screener against the executor and the citations
 
 uv run pytest                          # offline tests; -m network, -m gpu for live checks
 ```
@@ -85,7 +95,7 @@ judging stop at their budgets (docs/04) and resume where they stopped.
 
 ## Configuration
 
-Seven files:
+Nine files:
 
 | File | What it holds |
 |---|---|
@@ -93,8 +103,9 @@ Seven files:
 | `configs/systems.yaml` | the system catalog: one definition per kept system version |
 | `configs/training.yaml` | d1 training recipes |
 | `configs/experiments/baselines.yaml` | DS-base and the simple baselines on the dev splits, and the audit runs (variants `june`, `seed1`, `evidence`, `nov`, `gpt41`) |
-| `configs/experiments/controller.yaml` | the controller on train and val (variants `smoke`, `rollouts_d1`, `val`, `gate`) |
-| `configs/experiments/evaluate.yaml` | the main comparison at B0 (variants `dev`, `dev2`, `test`, `test-ext`, `test-closed`, `replay`); DraftRef (`dsb-dr-dev`, `dsb-dr-dev2`, `dsb-dr-test`), DraftRef with the citation rule (`dsb-drcr-dev`, `dsb-drcr-dev2`, `dsb-drcr-test`) and DS-base with d1's filter (`dsb-d1-test`) |
+| `configs/experiments/controller.yaml` | the controller on train and val (variants `smoke`, `rollouts`, `rollouts_d1`, `val`, `gate`) |
+| `configs/experiments/evaluate.yaml` | the main comparison at B0 (variants `dev`, `dev2`, `test`, `test-ext`, `test-closed`, `replay`); DraftRef (`dsb-dr-dev`, `dsb-dr-dev2`, `dsb-dr-test`), DraftRef with the citation rule (`dsb-drcr-dev`, `dsb-drcr-dev2`, `dsb-drcr-test`) and DS-base with d1's filter (`dsb-d1-test`); the d1 screener (`dev-screen`, `dev2-screen`, `test-screen`) and the arXiv-only DRB2 check (`drb2-test`) |
+| `configs/experiments/writing.yaml`, `reading.yaml` | the writing and reading revisions of the fixed rule's drafts (variants `train`, `val`; docs/06) |
 | `configs/experiments/drb2.yaml` | the DRB2 transfer check: six DRB2 test tasks with arXiv and the web, no variants (`jev run drb2 --run-id RUN`; docs/06) |
 
 **An experiment** names its systems per benchmark, with the shared settings at the top (among
@@ -158,12 +169,14 @@ src/jevscholar/
   runner.py judging.py                     running systems; judging their exports
   artifacts.py analysis.py report.py rewards.py   run readers; scoring; report.md; U and r
   data.py render.py                        data fetch/prepare; citations and export rendering
-  search/                                  arXiv (local and API), Tavily, OpenAlex; access policy
+  search/                                  arXiv (local and API), Tavily, OpenAlex; access policy;
+                                           arXiv full text
   benchmarks/                              DeepScholar-Bench, DRB2, ResearchQA and their scorers
   systems/                                 simple_rag, closed_book, deepscholar_base, controlled,
                                            fixed_evidence
   controller/                              state and rules, d1's prompt, policies, d1 readout and
-                                           training, its server, training data
+                                           training, its server, training data, the screener, the
+                                           frontier and headroom analyses
   checks/                                  judge agreement, calibration, blind review packs
 runs/<run_id>/                manifest.json, ledger.jsonl, <bench>/<system>/{tasks,export,eval}/,
                               analysis/, report.md
@@ -171,7 +184,8 @@ cache/                        the replay cache, search store and spend ledger (n
 ```
 
 A task folder holds `result.json`, and for DS-base its native outputs (`native/`), for the
-controlled loop its `decisions.jsonl`, `rows.jsonl`, `pages.jsonl` and `state.json`.
+controlled loop its `decisions.jsonl`, `rows.jsonl`, `pages.jsonl` and `state.json`, with
+`writes.jsonl` where it makes writing decisions and `screens.jsonl` where d1 screens.
 
 ## Reproducibility rules
 
@@ -221,3 +235,17 @@ manifest) is read, not re-run.
 | `dsb-dr-test`, `dsb-d1-test` | DraftRef and DS-base with d1's filter on all 180 test tasks, four writer samples; their searches replay `eval-test`'s and `eval-test-ext`'s (docs/06) |
 | `dsb-drcr-dev`, `dsb-drcr-dev2`, `dsb-drcr-test` | DraftRef with the citation rule (`dsb_d1_dr_cr`) on June dev, Nov dev2 and all 180 test tasks, four writer samples; its documents equal DraftRef's (docs/06) |
 | `drb2-transfer` | the DRB2 transfer check (docs/06) |
+
+The runs below were made on the `d1-screen` line (2026-11-09 to 11-15, before the model version
+was pinned: docs/02) and are kept with that line's records. Each manifest names its commit.
+
+| Run | Backs |
+|---|---|
+| `rollouts-train`, `rollouts-val` | the fixed rule on the 34 train and 9 val tasks (`controller.yaml` `rollouts`; val with `--set benchmarks.deepscholar.split=val`): the drafts the writing and reading revisions start from |
+| `eval-dev-trained` | the fixed rule at 3 to 6 batches on June dev: the stopping headroom (docs/06) |
+| `write-pilot-train`, `write-pilot-val` | the writing revisions (docs/06) |
+| `read-pilot-train`, `read-pilot-val` | the reading revisions (docs/06) |
+| `controller/screen` | the d1 screener adapter, sha256 `0ec04682ed2c880a34e279f24df0d121671629a0a0d7e8274425fa4fddfb502e`, served as `ctl_screen`'s screener on port 9943 (docs/07) |
+| `eval-dev-screen`, `eval-dev2-screen` | the screened fixed rule against the fixed curve on June dev and Nov dev2 (docs/07) |
+| `eval-test-screen` | the screener's registered test on the first 90 test tasks (docs/07) |
+| `eval-drb2-test` | the arXiv-only DRB2 check (docs/06) |

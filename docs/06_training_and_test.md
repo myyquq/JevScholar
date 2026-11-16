@@ -1,10 +1,10 @@
 # 6. Training d1, the final test and DraftRef
 
 This document covers training d1 (a short supervised warm start, then bounded reinforcement
-learning) and its val gate, the final DeepScholar test, DraftRef (DS-base writing from its
-search draft's references), and a small DRB2 transfer check. Names: **d1** is the untrained
-decision model (`ctl_d1`: the released checkpoint with its prompt); **d1-sft** and **d1-rl** are
-d1 after the warm start and after RL.
+learning) and its val gate, the final DeepScholar test, the headroom of the loop's decisions,
+DraftRef (DS-base writing from its search draft's references), and two small DRB2 transfer
+checks. Names: **d1** is the untrained decision model (`ctl_d1`: the released checkpoint with its
+prompt); **d1-sft** and **d1-rl** are d1 after the warm start and after RL.
 
 ## Conditions of every comparison
 
@@ -266,6 +266,55 @@ The first 90 tasks (closed-book one writer sample; columns as in docs/05):
   nugget coverage of all arms (.333, .329) and about half of d1's reference recall (.116, .104).
 - **U.** d1's U is above DS-base's on the first 90 tasks (+0.029 [0.001, 0.058]), not on the other
   90 (+0.008 [−0.023, 0.039]).
+
+## Decision headroom
+
+d1 can beat the fixed rule only where some decision leaves room to gain. Three oracles bound what
+choosing per task could add to the fixed rule's own episodes, with no d1 involved. An oracle picked
+and scored on the same noisy scores mostly picks writer noise, so each is cross-fitted on two
+samples: the choice is made on one sample and scored on the other, both ways, and averaged per task
+(`jev controller headroom RUN`, paired 95% intervals). For stopping, these are each budget's two
+independent writer samples; for revising and reading, two revision samples of the same draft, so the
+draft's own noise is shared by every choice (submitting has one report). These runs were made on the
+`d1-screen` line before the model version was pinned (docs/02).
+
+- **When to stop** (run `eval-dev-trained`, June dev, 20 tasks). The fixed rule at 3 to 6
+  batches gives a cost–quality curve, U .378, .382, .396 and .399, from $.021 to $.047 a task.
+  An oracle that picks one budget per task, at a mean cost no higher than a uniform budget's,
+  gains U +.011 [−.036, .057] over 4 batches and −.011 over 6; picked and scored on the same
+  samples it would claim about +.05. `jev controller frontier RUN` compares a controller with
+  this curve at matched cost.
+- **How to revise** (runs `write-pilot-train`, `write-pilot-val`;
+  `configs/experiments/writing.yaml`). Writing decisions follow the first draft (`revise` in a
+  controlled cell; none by default), each between `submit` and the revisions still affordable,
+  at most two. `ground` rewrites the draft so that each cited sentence states only what its
+  sources support; `expand` so that it also covers the paper's problem, the field's key ideas and
+  documents not yet discussed (docs/03: 71% of the nuggets restate the abstract or frame the
+  field). A revision is DS-base's section writer again, with the draft as its existing content.
+  From each draft the fixed rule submitted on the 34 train and 9 val tasks (runs `rollouts-train`,
+  `rollouts-val`), the cells submit it, ground it, expand it, or expand then ground it, two
+  revision samples each. Against submitting, U is −.011 (ground), −.003 (expand) and −.007
+  (expand, then ground) on train, every interval across 0; on val, expand +.028 [−.007, .064].
+  A revision costs about $0.001. The oracle over the four choices reaches U .436 against .435
+  for submitting (train).
+- **What to read** (runs `read-pilot-train`, `read-pilot-val`;
+  `configs/experiments/reading.yaml`). The writer reads titles and abstracts only. Two further
+  revisions give it each document's full text: `read` revises the draft for coverage with each
+  document's excerpt after its abstract, and `redraft` writes the section anew from them. The
+  excerpt is the PDF's text from its introduction's heading, cut to 3,000 characters
+  (`search/fulltext.py`), fetched beforehand at the version the document's URL names
+  (`jev data fulltext RUN...`, into `cache/fulltext/`); 763 of the 764 PDFs were fetched, and the
+  writer read 8 to 26 excerpts per task. Against submitting, U is −.003 (read), +.005 (redraft)
+  and −.003 (expand) on train, every interval across 0, and alike on val, where redraft lowers
+  cite_p (−.107 [−.237, .023]). Reading costs $0.004 a task. The oracle over the four choices
+  gains U +.010 [−.013, .032] (train). The judges check citations against the abstracts, so a
+  claim only the full text supports can count as unsupported: cite_p and claim support are, if
+  anything, biased against reading.
+
+No decision this loop makes, when to stop, how to revise or what to read, moves the judged scores
+beyond the writer's sample-to-sample noise at matched cost; more search budget does, slowly. With
+the draft diagnosis above, this points to the writer's input rather than the controller's
+choices. d1's other use, screening papers in place of the executor, is in docs/07.
 
 ## Trained-controller comparison on June dev
 
@@ -546,6 +595,39 @@ its one search; DS-base's agent had 9 to 32 further web calls refused per task.
 
 Every score interval includes 0: on six tasks no system's total differs resolvably from DS-base's.
 The other three cost less than DS-base, each with its cost interval wholly below 0.
+
+**A second check, arXiv only** (variant `drb2-test`, run `eval-drb2-test`, made at commit
+`763dc4c` on the `d1-screen` line). DRB2 test[:12] in the same frozen order, 6 en and 6 zh, so
+its first six are the tasks above. arXiv only for every system, two writer samples: DS-base
+intro-only, Simple RAG (K = 20), the fixed rule at 3 batches and the screened cells of docs/07 at
+3 and 4 batches. The controllers planned within a B0 of $0.34 and searched with that commit's
+DRB2 wording (the research request without its forbidden-article rule as the first query); the
+DRB2 B0 is now $0.67 and the DRB2 search is the one above, so the variant no longer reproduces
+this run. Metrics are DRB2's own: total (primary), info recall, analysis and
+presentation.
+
+When the relevance filter keeps no paper, DS-base's writer, which the controllers share, raises
+and the report is empty, scored 0. Failed tasks of 12 (both samples): Simple RAG 0, screened b4
+2, screened b3 3, DS-base 3, fixed 5.
+
+| System | Cost per task (% of DS-base) | Total, all 12 | Total, the 7 every system wrote | Info recall (7) | Analysis (7) | Presentation (7) |
+|---|---|---|---|---|---|---|
+| DS-base intro-only | $.310 (100%) | .179 | .273 | .210 | .265 | .816 |
+| Simple RAG (K = 20) | $.006 (2%) | .208 | .241 | .164 | .257 | .847 |
+| fixed b3 | $.027 (9%) | .110 | .188 | .131 | .130 | .804 |
+| screened b3 | $.013 (4%) | .122 | .163 | .114 | .107 | .733 |
+| screened b4 | $.015 (5%) | .119 | .175 | .125 | .105 | .791 |
+
+On the 7 tasks every system wrote: screened b4 − DS-base −.098 [−.175, −.022], fixed − DS-base
+−.085 [−.151, −.019], Simple RAG − DS-base −.032 [−.091, .027], screened b3 − fixed −.025
+[−.069, .020], screened b4 − fixed −.013 [−.046, .019]. On all 12, failures scored 0: fixed −
+DS-base −.069 [−.121, −.017], Simple RAG − fixed +.098 [.051, .146]; screened − fixed +.012
+(b3) and +.010 (b4), neither resolved. The screener's saving carries over (about half of the
+fixed rule's cost) with no resolvable loss against the fixed rule. The controllers fall below
+DS-base and Simple RAG, mainly on analysis (about .11 to .13 against .26): a few arXiv batches
+leave few documents for a long report, and they fail where the filter keeps none. Twelve tasks,
+arXiv only, on topics mostly outside arXiv (finance, history, games): a transfer diagnostic, not a
+competitive DRB2 result.
 
 ## The research question
 

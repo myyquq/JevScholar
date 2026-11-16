@@ -30,6 +30,11 @@ version, fresh or from the replay cache, stops the run before it is used or stor
 version is part of every run cell's and every verdict's identity. `jev check version` makes one
 uncached call and fails unless the pinned version answers.
 
+The exception is the runs made on the `d1-screen` line from 2026-11-09 to 11-15: the d1 screener
+(docs/07), the decision headroom and the arXiv-only DRB2 check (docs/06). Their code did not
+record the fingerprint, so their version is not known. They ran in the same days as runs that
+did record it, and every reply those runs recorded came from the version above.
+
 ## DeepSeek against GPT-4.1
 
 The DeepScholar paper reports DeepScholar-ref with GPT-4.1 and with Llama-4. We ran the paper's
