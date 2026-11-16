@@ -4,7 +4,7 @@
 # Alias naming rules: the executor alias must contain "deepseek" (openai-agents reasoning replay);
 # judge aliases must avoid "o1", a "gpt-5" prefix and "oss" (upstream client heuristics).
 
-campaign_usd: 126.0  # hard stop on billed spend summed over all runs (cache/spend.sqlite)
+campaign_usd: 128.0  # hard stop on billed spend summed over all runs (cache/spend.sqlite)
 # the model version every result comes from: a reply's `system_fingerprint` (docs/02)
 versions: {deepseek-flash: bc19ba97cbe016479903222bb1578db6}
 

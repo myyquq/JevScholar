@@ -71,6 +71,18 @@ recall but agrees on only 82%. On June dev the cascade at .7 decides 64% of the 
 the same share of papers as the executor; its cited recall (.944 against .907) is 51 against 49
 of the 54 cited papers.
 
+**Retrained on other runs.** The same recipe, on the labels `screen-data` builds from the
+controller study's own runs (the same tasks, other runs: 5,265 train verdicts, 1,225 val with 48
+cited papers, 5,252 June dev with 73 cited), gives adapter `c6784661…`, the checkpoint at step
+200 of 313 (val cross-entropy .582, agreement .742). It ranks at least as well: AUC against the
+executor .87 on its June dev labels, cited against not .87. Val picks δ .7 again (cited recall
+.979 against the executor's .938, d1 deciding 63%; .6 decides 83% but agrees on only 83%). At δ
+.7 on June dev it decides 68% of the papers and agrees with the executor on 92%; it keeps 31% of
+the papers, where the executor keeps 35% (54% on the labels above), and 68 of the 73 cited ones,
+as many as the executor. The recipe carries to new labels. The label sets differ, so the two
+adapters are compared by these offline scores only, and every in-loop and test result below is
+`0ec04682…`'s.
+
 ## In the loop
 
 A controlled cell with `screener` (`systems/controlled.py`; none by default) sends each chosen
