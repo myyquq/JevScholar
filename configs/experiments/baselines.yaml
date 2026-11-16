@@ -1,8 +1,20 @@
 # DeepScholar-base and the simple baselines on the dev splits, at their natural cost (no shared
-# cap): the reproduction and repair record of docs/03. Systems of a benchmark run in the listed
-# order: the as-is DS-base replays the repaired one's search trajectory from the cache, and the
-# citation repairs replay their unrepaired runs' search and screening.
+# cap): the reproduction, repair and audit record of docs/03. Systems of a benchmark run in the
+# listed order: the as-is DS-base replays the repaired one's search trajectory from the cache, and
+# the citation repairs replay their unrepaired runs' search and screening.
 budget: {task_usd: 2.0, run_usd: 10.0, judge_run_usd: 4.0}
+
+systems:
+  simple_rag_k5: {use: simple_rag, k: 5}  # Simple RAG's K: 5, 10 (bare simple_rag) and 20
+  # the DS-base writer on fixed documents (`fixed_evidence`): DS-base's own 30, the important
+  # citations, or both
+  fe_dsb:
+    use: fixed_evidence
+    evidence: [{run: baselines-june, system: deepscholar_base_intro}]
+  fe_gold: {use: fixed_evidence, evidence: [gold]}
+  fe_dsb_gold:
+    use: fixed_evidence
+    evidence: [{run: baselines-june, system: deepscholar_base_intro}, gold]
 
 variants:
   june:  # June dev: every DS-base version, Simple RAG and closed-book; ResearchQA and DRB2 dev
@@ -10,11 +22,24 @@ variants:
       deepscholar:
         split: dev
         limit: 20
-        systems: [simple_rag_k20, closed_book, deepscholar_base, deepscholar_base_asis,
-                  deepscholar_ref, deepscholar_base_citefix, deepscholar_ref_citefix,
-                  deepscholar_base_intro]
-      researchqa: {split: dev, limit: 40, systems: [simple_rag_raw, closed_book, deepscholar_base]}
-      drb2: {split: dev, limit: 12, systems: [simple_rag_k20, closed_book, deepscholar_base_citefix]}
+        systems: [simple_rag_k20, simple_rag, simple_rag_k5, closed_book, deepscholar_base,
+                  deepscholar_base_asis, deepscholar_ref, deepscholar_base_citefix,
+                  deepscholar_ref_citefix, deepscholar_base_intro, deepscholar_base_intro_nobg]
+      researchqa: {split: dev, limit: 40, systems: [simple_rag_k20, closed_book, deepscholar_base]}
+      drb2:
+        split: dev
+        limit: 12
+        systems: [simple_rag_k20, closed_book, deepscholar_base, deepscholar_base_citefix]
+  seed1:  # the whole-system noise floor: Simple RAG again under another seed
+    seed: 1
+    benchmarks:
+      deepscholar: {split: dev, limit: 20, systems: [simple_rag_k20]}
+  evidence:  # how much better evidence moves the scores (after june; seeds 0, 1, 2 via --set seed=)
+    benchmarks:
+      deepscholar:
+        split: dev
+        limit: 20
+        systems: [fe_dsb, fe_gold, fe_dsb_gold]
   nov:  # Nov dev2: the paper's protocol against the paper's November numbers
     benchmarks:
       deepscholar:

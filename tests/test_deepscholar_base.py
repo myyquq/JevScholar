@@ -375,9 +375,10 @@ async def test_literal_braces_reach_every_prompt(monkeypatch: pytest.MonkeyPatch
         }
     )
 
-    top.filter(configs, docs, TOPIC)
-    intro = await fg.generate_intro_section(TOPIC, docs, "Background {with} }{", configs)
-    _, summaries = await tx.categorize_references(TOPIC, intro, docs, configs)
+    with dsb.task_scope(FakeSearch("x"), 0):
+        top.filter(configs, docs, TOPIC)
+        intro = await fg.generate_intro_section(TOPIC, docs, "Background {with} }{", configs)
+        _, summaries = await tx.categorize_references(TOPIC, intro, docs, configs)
 
     assert [name for name, _ in seen] == ["filter", "topk", "agg", "map", "agg"]
     assert all(TOPIC in prompt for name, prompt in seen if name != "map")
@@ -464,6 +465,84 @@ async def test_run_persists_native_outputs_and_status(
         }
 
 
+def test_d1_screen_replaces_the_filter_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With `screen`, the pool's papers d1 keeps, in the order of its P (ties in pool order), up
+    to final_max_results_count, replace sem_filter and sem_topk; without it, the identity is as
+    before it existed and the filter step is DS-base's own."""
+    from jevscholar.controller.policy import D1Screen
+
+    top = dsb.install()
+    p = {"a": 0.3, "b": 0.7, "c": 0.9, "d": 0.7, "e": 0.1}
+    monkeypatch.setattr(
+        D1Screen, "read", lambda self, ctx, abstract, rows: {r["url"]: p[r["url"]] for r in rows}
+    )
+    task = Task(bench="deepscholar", id="7", prompt="p", meta={"abstract": "x"},
+                policy=AccessPolicy(cutoff=None))  # fmt: skip
+    ctx = SimpleNamespace(task=task)
+    plain = dsb.DeepScholarBase({}).identity()["params"]
+    assert "screen" not in plain and dsb.DeepScholarBase({}).screen(ctx) is None
+    system = dsb.DeepScholarBase({"screen": {"threshold": 0.5}})
+    assert system.identity()["params"] == plain | {"screen": {"adapter": None, "threshold": 0.5}}
+    docs = pd.DataFrame({"url": list(p), "title": list(p), "snippet": list(p)})
+    configs = SimpleNamespace(final_max_results_count=2)
+    with dsb.task_scope(FakeSearch("x"), 0, screen=system.screen(ctx)):
+        assert list(top.filter(configs, docs, "t").url) == ["c", "b"]
+        configs.final_max_results_count = 30
+        assert list(top.filter(configs, docs, "t").url) == ["c", "b", "d"]
+        rejected = top.filter(configs, docs[docs.url.isin(["a", "e"])], "t")
+        assert rejected.empty and list(rejected.columns) == list(docs.columns)  # upstream retries
+
+
+async def test_draft_docs_put_the_drafts_pool_papers_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With `draft_docs`, the pool papers the search draft names (versionless id, the draft's
+    order, each id's first pool row) come first, then d1's kept papers by P without those ids, to
+    final_max_results_count or the named count; it needs `screen` and joins the identity only on."""
+    from jevscholar.controller.policy import D1Screen
+
+    top = dsb.install()
+    url = "http://arxiv.org/abs/2101.0000{}".format
+    urls = [url(f"{i}v1") for i in range(1, 6)] + [url("3v2")]
+    p = dict(zip(urls, (0.9, 0.1, 0.2, 0.8, 0.7, 0.6), strict=True))
+    monkeypatch.setattr(
+        D1Screen, "read", lambda self, ctx, abstract, rows: {r["url"]: p[r["url"]] for r in rows}
+    )
+    pool = pd.DataFrame({"url": urls, "title": urls, "snippet": urls})
+    background = "B [1], A [2].\n[1] B. arXiv:2101.00003\n[2] A. arXiv:2101.00002v1, 2199.00009"
+
+    async def agentic_search(configs: Any, topic: str, end_date: Any) -> tuple:
+        return ["q"], pool, background
+
+    monkeypatch.setattr(sys.modules["deepscholar_base.search.agentic_search"], "agentic_search",
+                        agentic_search)  # fmt: skip
+    task = Task(bench="deepscholar", id="7", prompt="p", meta={"abstract": "x"},
+                policy=AccessPolicy(cutoff=None))  # fmt: skip
+    ctx = SimpleNamespace(task=task)
+    screened = dsb.DeepScholarBase({"screen": {"threshold": 0.5}})
+    system = dsb.DeepScholarBase({"screen": {"threshold": 0.5}, "draft_docs": True})
+    assert "draft_docs" not in screened.identity()["params"]
+    assert system.identity()["params"] == screened.identity()["params"] | {"draft_docs": True}
+    with pytest.raises(ValueError, match="needs screen"):
+        dsb.DeepScholarBase({"draft_docs": True})
+    configs = SimpleNamespace(use_agentic_search=True, final_max_results_count=3)
+    with dsb.task_scope(FakeSearch("x"), 0, screen=system.screen(ctx)) as scope:
+        _, docs, bg = await top.search(configs, "t", None)
+        assert (docs is pool, bg, scope.background) == (True, background, background)
+        assert list(top.filter(configs, docs, "t").url) == [url("3v1"), url("2v1"), url("1v1")]
+        configs.final_max_results_count = 1  # all the named papers, even past the count
+        assert list(top.filter(configs, docs, "t").url) == [url("3v1"), url("2v1")]
+        configs.final_max_results_count = 30  # 2101.00003v2 is the named 2101.00003 again
+        out = top.filter(configs, docs, "t")
+        assert list(out.url) == [url("3v1"), url("2v1"), url("1v1"), url("4v1"), url("5v1")]
+        assert list(out.columns) == list(pool.columns)
+        twin = pool.iloc[[2, 1]].set_axis([0, 0])  # repeated labels: only the named row
+        scope.background = "arXiv:2101.00003"
+        assert list(top.filter(configs, twin, "t").url) == [url("3v1")]
+        scope.background = "no ids"  # a draft that names no pool paper: d1's documents
+        assert list(top.filter(configs, docs, "t").url) == [url(f"{i}v1") for i in (1, 4, 5)] + [
+            url("3v2")
+        ]
+
+
 def test_config_overrides_select_the_paper_protocol(tmp_path: Path) -> None:
     vendored("deepscholar")
     task = Task(bench="deepscholar", id="7", prompt="p", policy=AccessPolicy(cutoff=None))
@@ -489,6 +568,42 @@ def test_config_overrides_select_the_paper_protocol(tmp_path: Path) -> None:
     for bad in ({"lm": {}}, {"enable_web_search": True}, {"num_steps": 2}, {"search_mode": "rec"}):
         with pytest.raises(ValueError):
             dsb.DeepScholarBase({"config": bad})
+
+
+async def test_cite_rule_replaces_the_writers_line_for_its_call_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`cite_rule` replaces CITE_ALL in the guidelines and the quality checks during the intro
+    writer's call, keeps P10's live placeholder, restores both after, and joins the identity
+    only when set."""
+    top = dsb.install()
+    fg = sys.modules["deepscholar_base.final_generation"]
+    sg = sys.modules["deepscholar_base.utils.summary_generation"]
+    old = sg.citation_guidelines, sg.section_writer_instructions
+    seen: list[tuple[str, str, str]] = []
+
+    async def summary(topic: str, docs: Any, instructions: str, existing: str, **kw: Any) -> str:
+        g = sg.citation_guidelines
+        seen.append((g, sg.section_writer_instructions, sg.input_sanitization(g)))
+        return "intro"
+
+    monkeypatch.setattr(fg, "generate_section_summary_with_citations", summary)
+    for rule in (None, "- Cite each source."):
+        with dsb.task_scope(FakeSearch("x"), 0, repair_citations=True, cite_rule=rule):
+            await top.generate_intro_section(
+                "t", pd.DataFrame(), "b", SimpleNamespace(generation_lm=None)
+            )
+        assert (sg.citation_guidelines, sg.section_writer_instructions) == old
+    assert seen[0][:2] == old
+    assert seen[1][:2] == tuple(s.replace(dsb.CITE_ALL, "- Cite each source.") for s in old)
+    assert all(s.count(dsb.CITE_ALL) == 1 for s in old)
+    assert "{_citation_number}" in seen[1][2] and "{{_citation_number}}" not in seen[1][2]
+    plain = dsb.DeepScholarBase({}).identity()["params"]
+    assert "cite_rule" not in plain
+    ruled = dsb.DeepScholarBase({"cite_rule": "- Cite each source."}).identity()["params"]
+    assert ruled == plain | {"cite_rule": "- Cite each source."}
+    with pytest.raises(ValueError, match="braces"):
+        dsb.DeepScholarBase({"cite_rule": "- Cite the {source}."})
 
 
 async def test_citation_repair_strips_stale_background_numbers(

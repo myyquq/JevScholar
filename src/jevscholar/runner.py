@@ -24,6 +24,7 @@ import json
 import logging
 import multiprocessing as mp
 import os
+import re
 import subprocess
 import time
 import traceback
@@ -59,6 +60,13 @@ from jevscholar.util import atomic_write, sha256_file
 log = logging.getLogger("jevscholar.runner")
 PEAK_POLL_S = 60
 DEGRADED = "result.degraded.json"  # first attempt of a re-queued degraded task
+# a failure outside the system's own work (the d1 server, the network, a provider error): rerun
+# on request (`jev run --rerun-infra`), at most RERUNS times; the attempts stay as result.failed-n
+INFRA = re.compile(
+    r"no d1 server|d1 server has adapter|ConnectionError|ReadTimeout|upstream_unavailable"
+    r"|upstream_error|HTTP 5\d\d"
+)
+RERUNS = 2
 FORWARDED = {"JEV_TAVILY_KEY": "TAVILY_API_KEY", "JEV_OPENALEX_KEY": "OPENALEX_API_KEY"}
 
 
@@ -77,7 +85,11 @@ class RunJob:
 
 
 def plan(
-    exp: Experiment, run_dir: Path, models: ModelsConfig, only: list[str] | None = None
+    exp: Experiment,
+    run_dir: Path,
+    models: ModelsConfig,
+    only: list[str] | None = None,
+    rerun_infra: bool = False,
 ) -> tuple[dict[str, Any], dict[str, list[str]], list[list[RunJob]]]:
     """(manifest cells, manifest tasks, job batches): every cell's identity and pending tasks,
     one batch per system. Every system is constructed once here, so a bad parameter fails before
@@ -88,6 +100,7 @@ def plan(
         "url": upstream.base_url,
         "dialect": upstream.dialect,
     }
+    routing |= models.pin(alias)
     cells, universe, batches = {}, {}, []
     for name in selected(exp, only):
         tasks = benchmarks.load_tasks(exp, name)
@@ -101,7 +114,7 @@ def plan(
             identity["resolved"] = make_system(use, json.dumps(params)).identity()
             cell = exp.cell_hash(name, system, **identity)
             cells[name][system] = {"hash": cell, **identity}
-            todo = pending(run_dir, name, system, tasks, cell)
+            todo = pending(run_dir, name, system, tasks, cell, rerun_infra)
             log.info("%s/%s: %d pending tasks", name, system, len(todo))
             job = functools.partial(
                 RunJob, run_dir=run_dir, system=system, use=use, params=json.dumps(params),
@@ -119,8 +132,12 @@ def selected(exp: Experiment, only: list[str] | None) -> list[str]:
     return [b for b in exp.benchmarks if not only or b in only]
 
 
-def pending(run_dir: Path, bench: str, system: str, tasks: list[Task], want: str) -> list[Task]:
-    """Tasks without a result or with a not yet retried degraded one; another cell's is an error."""
+def pending(
+    run_dir: Path, bench: str, system: str, tasks: list[Task], want: str, rerun_infra: bool = False
+) -> list[Task]:
+    """Tasks without a result or with a not yet retried degraded one (and, with `rerun_infra`, a
+    failed one whose error is an infrastructure error, at most RERUNS times); another cell's
+    result is an error."""
     todo = []
     for task in tasks:
         path = task_dir(run_dir, bench, system, task) / "result.json"
@@ -133,9 +150,16 @@ def pending(run_dir: Path, bench: str, system: str, tasks: list[Task], want: str
                 f"{path} was produced by cell {result['cell_hash']}, but {bench}/{system} now "
                 f"hashes to {want}: the configuration changed, start a new run id instead"
             )
-        if result["status"] == "degraded" and not path.with_name(DEGRADED).exists():
+        attempts = len(list(path.parent.glob("result.failed-*")))
+        retry = result["status"] == "degraded" and not path.with_name(DEGRADED).exists()
+        if retry or (rerun_infra and infra(result) and attempts < RERUNS):
             todo.append(task)
     return todo
+
+
+def infra(result: dict[str, Any]) -> bool:
+    """Whether a result failed on an infrastructure error (INFRA)."""
+    return result["status"] == "failed" and bool(INFRA.search(result["error"] or ""))
 
 
 @functools.cache
@@ -153,13 +177,17 @@ def run_experiment(
     secrets: dict[str, str] | None = None,
     models: ModelsConfig | None = None,
     cache_dir: Path = CACHE,
+    rerun_infra: bool = False,
 ) -> str | None:
     """Run every pending task of the experiment into run_dir (created or resumed).
 
     Returns the reason dispatch stopped early (breaker, run or campaign budget), else None.
     """
     models = models or load_models()
-    cells, universe, batches = plan(exp, run_dir, models, only)
+    cells, universe, batches = plan(exp, run_dir, models, only, rerun_infra)
+    for jobs in batches:  # what a system needs outside the gateway, before any dispatch
+        if jobs:
+            make_system(jobs[0].use, jobs[0].params).preflight()
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = read_manifest(run_dir) | {
         "run_id": run_dir.name,
@@ -219,7 +247,7 @@ def execute(
     with session(run_dir, manifest, command, workers=workers, **record) as current:
         gw = Gateway(
             models, run_dir, exp.budget, caps, secrets=secrets, cache_dir=cache_dir,
-            replay_only=exp.replay_only,
+            replay_only=exp.replay_only, web_ops=exp.search.web_ops,
         )  # fmt: skip
         url = gw.start()
         try:
@@ -450,8 +478,10 @@ def run_task(gateway: str, job: RunJob) -> Status | None:
         cell_hash=job.cell_hash,
     )
     out = ctx.out_dir / "result.json"
-    if out.exists():  # the degraded first attempt of a re-queued task
-        out.replace(out.with_name(DEGRADED))
+    if out.exists():  # a re-queued task's earlier attempt: degraded, or failed (infrastructure)
+        degraded = json.loads(out.read_text())["status"] == "degraded"
+        n = len(list(out.parent.glob("result.failed-*.json"))) + 1
+        out.replace(out.with_name(DEGRADED if degraded else f"result.failed-{n}.json"))
     atomic_write(out, to_json(result, indent=2))
     log.info("%s: %s in %.0fs, $%.4f", where, status, elapsed, usage["spent_usd"])
     return status

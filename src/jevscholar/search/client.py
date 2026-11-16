@@ -4,11 +4,12 @@ Each logical call checks the query against the task's AccessPolicy, is admitted 
 (a closed budget latch or a tripped breaker stops it before any external request), makes a cached
 low-level call (raw upstream results, shared across tasks), filters those results with the same
 policy, and is charged, cached replays and failures included, so the ledger sees every tool
-action. A page is read only if its URL and its text pass the policy; under
-`undated_web="drop"` it must also be a hit of an allowed web search by this client, since any
-other page has no date at all. The client is synchronous on purpose: DeepScholar calls its tools
-synchronously from inside a running event loop, so nothing here may touch asyncio; async systems
-wrap calls in `asyncio.to_thread`.
+action. A web call the gateway refuses because the task's web operations are used up fails like
+any tool call (ToolError); `stats["web"]` counts the web calls admitted. A page is read only if
+its URL and its text pass the policy; under `undated_web="drop"` it must also be a hit of an
+allowed web search by this client, since any other page has no date at all. The client is
+synchronous on purpose: DeepScholar calls its tools synchronously from inside a running event
+loop, so nothing here may touch asyncio; async systems wrap calls in `asyncio.to_thread`.
 """
 
 from __future__ import annotations
@@ -22,7 +23,14 @@ from typing import Any, TypeVar
 
 import requests
 
-from jevscholar.search import BudgetExhausted, FatalToolError, ToolError, arxiv_backend, tavily
+from jevscholar.search import (
+    WEB_TOOLS,
+    BudgetExhausted,
+    FatalToolError,
+    ToolError,
+    arxiv_backend,
+    tavily,
+)
 from jevscholar.search.policy import (
     canonical_url,
     filter_papers,
@@ -45,10 +53,13 @@ class Meter:
 
     def admit(self, tool: str, meta: dict[str, Any] | None = None) -> None:
         """Raises BudgetExhausted if the gateway refuses (402): the tag's budget latch is closed
-        or the circuit breaker has tripped."""
+        or the circuit breaker has tripped; ToolError if it refuses a web call (429): the task's
+        web operations are used up."""
         r = self._post("admit", {"tool": tool, "meta": meta or {}})
         if r.status_code == 402:
             raise BudgetExhausted(r.text)
+        if r.status_code == 429:
+            raise ToolError(r.text)
         r.raise_for_status()
 
     def charge(
@@ -79,7 +90,7 @@ class SearchClient:
         self._arxiv = arxiv_backend()
         self._backend = self._arxiv.__name__.rpartition(".")[2]
         self._searched: set[str] = set()  # canonical URLs of hits this client's searches returned
-        self.stats = {"calls": 0, "errors": 0, "blocked": 0, "cached": 0}
+        self.stats = {"calls": 0, "errors": 0, "blocked": 0, "cached": 0, "web": 0}
         self._lock = threading.Lock()
 
     # ----------------------------------------------------------------------- tools
@@ -147,7 +158,7 @@ class SearchClient:
         keep: Callable[[R], R],
     ) -> R:
         self.meter.admit(tool, args)
-        self._bump(calls=1)
+        self._bump(calls=1, web=int(tool in WEB_TOOLS))
         try:
             raw, cached = fetch()
         except (ToolError, FatalToolError) as e:

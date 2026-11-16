@@ -61,11 +61,14 @@ def task_caps(exp: Experiment) -> dict[tuple[str, str], float]:
 
 
 def exported_report(task: Task, result: TaskResult | None) -> tuple[Report | None, int]:
-    """The report to export (None, an empty export scored 0, for missing or failed tasks) and the
-    number of cited sources dropped because the task's policy disallows them.
+    """The report to export (None, an empty export scored 0, for missing or failed tasks and
+    retrieval-only runs, which write nothing) and the number of cited sources dropped because the
+    task's policy disallows them.
 
     The search layer filters what tools return, but a report can still cite a URL no tool
     returned (e.g. one copied from page text); this audit applies the same rule to every system."""
     if result is None or result.status == "failed" or result.report is None:
+        return None, 0
+    if result.report.meta.get("written") is False:
         return None, 0
     return drop_sources(result.report, lambda s: source_allowed(s, task.policy))

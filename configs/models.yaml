@@ -4,15 +4,15 @@
 # Alias naming rules: the executor alias must contain "deepseek" (openai-agents reasoning replay);
 # judge aliases must avoid "o1", a "gpt-5" prefix and "oss" (upstream client heuristics).
 
-campaign_usd: 45.0  # hard stop on billed spend summed over all runs (cache/spend.sqlite)
+campaign_usd: 126.0  # hard stop on billed spend summed over all runs (cache/spend.sqlite)
+# the model version every result comes from: a reply's `system_fingerprint` (docs/02)
+versions: {deepseek-flash: bc19ba97cbe016479903222bb1578db6}
 
 upstreams:
   deepseek: {base_url: https://api.deepseek.com, key_env: DEEPSEEK_API_KEY, dialect: deepseek,
              concurrency: 64, timeout_s: 1200, offpeak_discount: 0.5}
   openai:   {base_url: https://api.openai.com/v1, key_env: OPENAI_API_KEY, dialect: openai,
              concurrency: 16, timeout_s: 1200}
-  local:    {base_url: "http://127.0.0.1:9931/v1", dialect: llama, concurrency: 4, timeout_s: 1800,
-             billed: false}  # priced at a market proxy for budgets, $0 billed
 
 aliases:
   # executors (replay cache on; default_max_tokens = the shared 10000 when a client sends none)
@@ -21,9 +21,6 @@ aliases:
   # the paper's DeepScholar-ref model, for the backbone comparison only (not a backbone of ours)
   gpt-4.1-exec:         {upstream: openai, model: gpt-4.1-2025-04-14, passthrough: true, cache: true,
                          price: {miss: 2.00, hit: 0.50, out: 8.00}}
-  qwen3.8-27b:          {upstream: local, model: qwen3.8-27b, thinking: false, cache: true,
-                         default_max_tokens: 10000,
-                         price: {miss: 0.24, hit: 0.05, out: 2.20}}  # local; OpenRouter price proxy
   # DeepSeek judges, mirroring each official judge's reasoning mode (never cached)
   ds-judge-chat:        {upstream: deepseek, model: deepseek-flash, thinking: false,
                          default_max_tokens: 4096, price: {miss: 0.30, hit: 0.006, out: 1.20}}

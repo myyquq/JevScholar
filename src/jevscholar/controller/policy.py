@@ -12,6 +12,10 @@
 Every policy returns a Decision: the index of the chosen candidate and, where the policy has
 them, its probabilities over the candidates and the exact input they came from (d1's request and
 raw answers, which RL needs to recompute them).
+
+`D1Screen` is d1 as DS-base's filter step (systems/deepscholar_base.py, `screen`): one question
+per paper (the target paper's abstract, the candidate's title and abstract), the paper kept at
+P(relevant) >= `threshold`, charged as the policy's calls are.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import asyncio
 import math
 import random
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol
 
@@ -34,13 +39,10 @@ from jevscholar.systems import chat
 from jevscholar.types import Strict, TaskContext
 
 CHOOSE_TOKENS = 50  # an option code: bounds a prompted choice's cost
-# The rules as the prompted policy was selected and evaluated with (their planning and revising
-# clauses name actions no longer offered; the text is kept so the policy stays the same system).
-RULES = """Rules of thumb: search while searches still find new relevant papers and the paper's
-main lines of prior work are not covered yet; the paper's abstract is a strong first query, and a
-keyword query aimed at what is still missing a good later one; finish once searches add few new
-relevant papers; plan when the relevant papers span several distinct lines of work; revise when
-the section may state more than its sources support."""
+RULES = """Rules of thumb: the paper's abstract is a strong first query, and a keyword query aimed
+at a line of prior work still missing a good later one; prefer searches whose new papers look
+relevant to the paper and unlike those already found; finish only when the paper's main lines of
+prior work are covered and no search is likely to add relevant papers."""
 
 
 @dataclass(frozen=True)
@@ -116,10 +118,11 @@ class D1Policy(Strict):
     async def choose(self, ctx: TaskContext, state: State, candidates: list[Candidate]) -> Decision:
         return await asyncio.to_thread(self._choose, ctx, state, candidates)
 
+    def preflight(self) -> None:
+        serves(self.url, self.adapter)
+
     def _choose(self, ctx: TaskContext, state: State, candidates: list[Candidate]) -> Decision:
-        served = requests.get(f"{self.url}/info", timeout=30).json()["adapter"]
-        if served != self.adapter:
-            raise RuntimeError(f"d1 server has adapter {served}, the system wants {self.adapter}")
+        self.preflight()
         meter, p = Meter(ctx.gateway, ctx.tag("control")), self.profile
         for level in range(len(LEVELS)):
             body = {"requests": [p.request(state, candidates, level)], "render": p.render}
@@ -140,6 +143,62 @@ class D1Policy(Strict):
     def _sample(self, ctx: TaskContext, state: State, dist: list[float]) -> int:
         rng = random.Random(f"{ctx.tag('control')}#{ctx.task.seed}#{state.decisions}")
         return rng.choices(range(len(dist)), weights=dist)[0]
+
+
+def serves(url: str, adapter: str | None) -> None:
+    """The d1 server at `url` must be up and serve `adapter`."""
+    try:
+        # the server answers one request at a time: /info may wait behind a /choice
+        served = requests.get(f"{url}/info", timeout=600).json()["adapter"]
+    except requests.RequestException as e:
+        raise RuntimeError(f"no d1 server at {url}: {e}") from None
+    if served != adapter:
+        raise RuntimeError(f"d1 server has adapter {served}, the system wants {adapter}")
+
+
+SCREEN = {
+    "type": "choice",
+    "instructions": "Should the candidate paper be kept as relevant prior work for the Related "
+    "Works section of the paper being written?",
+    "criteria": {
+        "relevant": "keep: the candidate is relevant to the paper's specific topic",
+        "not_relevant": "drop: the candidate is off-topic for the paper",
+    },
+}
+
+
+class D1Screen(Strict):
+    url: str = Field("http://127.0.0.1:9940", exclude=True)  # not part of the identity
+    adapter: str | None = None
+    threshold: float
+
+    def preflight(self) -> None:
+        serves(self.url, self.adapter)
+
+    def read(self, ctx: TaskContext, abstract: str, rows: Sequence[dict]) -> dict[str, float]:
+        """Each row's P(relevant) by URL, read in one request (one row per forward pass)."""
+        self.preflight()
+        meter = Meter(ctx.gateway, ctx.tag("screen"))
+        body = {
+            "requests": [
+                {
+                    "state": {
+                        "paper_abstract": abstract,
+                        "candidate": {"title": r["title"], "abstract": r["snippet"]},
+                    },
+                    "questions": [SCREEN],
+                }
+                for r in rows
+            ]
+        }
+        meter.admit("d1_choice")
+        r = requests.post(f"{self.url}/choice", json=body, timeout=600)
+        r.raise_for_status()
+        out = r.json()
+        meta = {"tokens": out["tokens"], "adapter": self.adapter, "papers": len(rows)}
+        meter.charge("d1_choice", n=math.ceil(out["tokens"] / 1000), meta=meta)
+        probs = [answer[0][0] for answer in out["probabilities"]]  # P(relevant), first option
+        return {row["url"]: p for row, p in zip(rows, probs, strict=True)}
 
 
 PolicySpec = Annotated[Fixed | Prompted | D1Policy, Field(discriminator="kind")]

@@ -1,0 +1,10 @@
+# The DRB2 transfer check (docs/06): six fresh test tasks, arXiv and Tavily for every system, at
+# most 4 web operations per task; the controllers at B0, DS-base at its natural cost. Serve d1
+# first: `scripts/train_env.sh jev controller serve`.
+search: {corpora: [arxiv, web], web_ops: 4}
+budget: {run_usd: 4.0, judge_run_usd: 4.0}
+benchmarks:
+  drb2:
+    split: test
+    ids: ["2", "101", "44", "23", "24", "87"]  # test[:6]: the first six of the frozen test order
+    systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_d1]

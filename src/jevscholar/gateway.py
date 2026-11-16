@@ -6,13 +6,16 @@ rejects `json_schema`), retries transient failures itself while telling SDKs not
 attempt into the ledger, replays the executor cache, and refuses work once a budget is spent or a
 fatal provider error has tripped the circuit breaker. A refusal is checked before every upstream
 attempt, retries included, and before every external tool call (`/admit`, the tool's own `/charge`
-following once it has ended), so no request leaves after a latch has closed. An upstream slot is
-held until its attempt is metered, and a call that waited for a slot checks again once it has
-one, so a queued call never starts on spend that is not yet on the books. Judge stages
-(`judge.*`) get their own budget keys and caps, so judging and generation can never starve each
-other, and are never replayed. LLM provider keys live only here (the Tavily and OpenAlex tools
-hold their own keys). With `replay_only`, an executor call that the cache cannot serve is refused
-instead of sent.
+following once it has ended), so no request leaves after a latch has closed. With `web_ops`, a
+task's web operations (Tavily searches and page reads) are counted as they are admitted, whatever
+their outcome, and the one past the limit is refused (429). An upstream slot is held until its
+attempt is metered, and a call that waited for a slot checks again once it has one, so a queued
+call never starts on spend that is not yet on the books. Judge stages (`judge.*`) get their own
+budget keys and caps, so judging and generation can never starve each other, and are never
+replayed. LLM provider keys live only here (the Tavily and OpenAlex tools hold their own keys).
+With `replay_only`, an executor call that the cache cannot serve is refused instead of sent. A
+model pinned to a version (`versions` in models.yaml) fails closed: a reply of another version,
+fresh (metered, never stored) or from the replay cache, trips the breaker.
 """
 
 from __future__ import annotations
@@ -40,7 +43,8 @@ from dotenv import dotenv_values
 from jevscholar.config import Alias, Budget, ModelsConfig, Upstream
 from jevscholar.ledger import Event, Ledger, SpendStore, llm_costs, scope, usage_tokens
 from jevscholar.paths import CACHE, SECRETS
-from jevscholar.types import make_tag, parse_tag
+from jevscholar.search import WEB_TOOLS
+from jevscholar.types import JUDGE_PREFIX, make_tag, parse_tag
 from jevscholar.util import connect
 
 log = logging.getLogger("jevscholar.gateway")
@@ -234,6 +238,22 @@ class ReplayCache:
         return self._used[tag, sha] - 1
 
 
+def probe_version(url: str, alias: str, run: str = "version-probe") -> str:
+    """One uncached call of a few tokens to `alias` through the gateway at `url` (a judge-scope
+    stage, so never replayed): the reply's model version. Raises RuntimeError when the gateway
+    refuses or fails it; a reply of another version than the pinned one trips its breaker."""
+    import requests
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+    tag = make_tag(run, "deepscholar", "probe", stamp, JUDGE_PREFIX + "version")
+    body = {"model": alias, "messages": [{"role": "user", "content": "Reply OK."}], "max_tokens": 5}
+    r = requests.post(f"{url}/t/{tag}/v1/chat/completions", json=body, timeout=300)
+    data = r.json()
+    if r.status_code != 200:
+        raise RuntimeError(data["error"]["message"])
+    return data.get("system_fingerprint")
+
+
 # --------------------------------------------------------------------------- server
 def _err(status: int, message: str, code: str) -> tuple[int, dict[str, Any]]:
     return status, {"error": {"message": message, "type": "jev_gateway", "code": code}}
@@ -288,11 +308,13 @@ class Gateway:
         secrets: dict[str, str],
         cache_dir: Path = CACHE,
         replay_only: bool = False,
+        web_ops: int | None = None,
     ) -> None:
         """`caps`: the generation cap per task of each (benchmark, system) cell (list USD; none
-        in a judging session, which makes no generation call)."""
+        in a judging session, which makes no generation call). `web_ops`: the web operations a
+        task may start (None: no limit)."""
         self.models, self.budget, self.caps, self.secrets = models, budget, caps, secrets
-        self.replay_only = replay_only
+        self.replay_only, self.web_ops = replay_only, web_ops
         self.session = f"{datetime.now(UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
         self.ledger = Ledger(run_dir / "ledger.jsonl", self.session)
         self.spend = SpendStore(cache_dir / "spend.sqlite")
@@ -303,6 +325,7 @@ class Gateway:
         self.url = ""
         self._usage: defaultdict[tuple[str, ...], _Spend] = defaultdict(_Spend)
         self._seen: Counter[tuple[str, str]] = Counter()  # (tag, request sha) -> arrivals
+        self._web: Counter[tuple[str, ...]] = Counter()  # budget key -> web operations admitted
         self._inflight: set[asyncio.Future] = set()  # upstream posts, also of departed clients
 
     def start(self) -> str:
@@ -337,8 +360,6 @@ class Gateway:
         app.router.add_post("/t/{tag}/admit", self._admit)
         app.router.add_post("/t/{tag}/charge", self._charge)
         app.router.add_get("/t/{tag}/usage", self._usage_view)
-        app.router.add_get("/v1/models", self._models_view)
-        app.router.add_get("/status", self._status_view)
         self._runner = web.AppRunner(app, handler_cancellation=True, access_log=None)
         await self._runner.setup()
         await web.TCPSite(self._runner, "127.0.0.1", 0).start()
@@ -389,7 +410,7 @@ class Gateway:
         self, event: Event, refusal: tuple[int, dict[str, Any]]
     ) -> tuple[int, dict[str, Any]]:
         """Record a refused call (it never started, so it costs nothing); returns the refusal."""
-        self._record(replace(event, http_status=402, error=refusal[1]["error"]["code"]))
+        self._record(replace(event, http_status=refusal[0], error=refusal[1]["error"]["code"]))
         return refusal
 
     def _trip(self, reason: str) -> None:
@@ -436,7 +457,11 @@ class Gateway:
         slot = (tag, sha) if alias.cache and generation else None  # judges: never
         if slot and (hit := self.cache.get(*slot)):
             k, value = hit
-            ev = event(http_status=200, cached=True, **value["event"])
+            fingerprint = value["response"].get("system_fingerprint")
+            if stale := self._stale(alias, fingerprint):
+                self._trip(f"replay cache: {stale}")
+                return self._refused(event(), _err(402, stale, "circuit_open"))
+            ev = event(http_status=200, cached=True, fingerprint=fingerprint, **value["event"])
             ev.meta["k"] = k
             self._record(ev)
             return 200, value["response"] | {"model": name}
@@ -494,9 +519,18 @@ class Gateway:
         finally:
             sem.release()
 
+    def _stale(self, alias: Alias, fingerprint: str | None) -> str | None:
+        """Why a reply of `alias` is of another model version than the pinned one (None: it is
+        not, or the model is not pinned)."""
+        want = self.models.versions.get(alias.model)
+        if want is None or fingerprint == want:
+            return None
+        return f"{alias.model} replied as model version {fingerprint}, not the pinned {want}"
+
     def _fatal(self, alias: Alias, status: int | None, err: dict[str, Any]) -> bool:
         """Whether an upstream error can never succeed in this run; if so, trip the breaker."""
-        fatal = status in FATAL_STATUS or "insufficient_quota" in (err.get("code"), err.get("type"))
+        codes = (err.get("code"), err.get("type"))
+        fatal = status in FATAL_STATUS or "insufficient_quota" in codes or "model_version" in codes
         if fatal:
             self._trip(f"{alias.upstream} HTTP {status}: {err['message']}")
         return fatal
@@ -518,9 +552,12 @@ class Gateway:
         finish = (data.get("choices") or [{}])[0].get("finish_reason")
         tok, at = usage_tokens(data.get("usage")), datetime.now(UTC)
         cost, billed = llm_costs(alias.price, upstream, tok, at)
-        ok = status == 200 and bool(data.get("choices")) and finish not in RETRY_FINISH
+        replied = status == 200 and bool(data.get("choices"))
+        ok = replied and finish not in RETRY_FINISH
         err = data.get("error")
         err = err if isinstance(err, dict) else {"message": err}
+        if replied and (stale := self._stale(alias, data.get("system_fingerprint"))):
+            ok, err = False, {"message": stale, "code": "model_version"}  # before any retry
         msg = None if ok else str(err.get("message") or f"HTTP {status} finish={finish}")
         replay = {"finish_reason": finish, "tokens": tok, "cost_usd": cost}
         ev = event(
@@ -528,6 +565,7 @@ class Gateway:
             http_status=status,
             latency_s=latency,
             error=msg,
+            fingerprint=data.get("system_fingerprint"),
             ts=at,
             billed_usd=billed,
             **replay,
@@ -553,10 +591,18 @@ class Gateway:
         return status, data, round(time.monotonic() - t0, 3)
 
     async def _admit(self, request: web.Request) -> web.Response:
-        """Before an external tool call: refused like an LLM call, so it never reaches the tool."""
+        """Before an external tool call: refused like an LLM call, so it never reaches the tool;
+        a web operation past the task's `web_ops` is refused too, and each one admitted counts."""
         tag, b = _tag(request), await request.json()
         tool = self._tool(b)
-        if refusal := self._refusal(tag):
+        refusal = self._refusal(tag)
+        if not refusal and tool in WEB_TOOLS and self.web_ops is not None:
+            if self._web[_key(tag)] < self.web_ops:
+                self._web[_key(tag)] += 1
+            else:
+                message = f"the task's {self.web_ops} web operations are used up"
+                refusal = _err(429, message, "web_ops_exhausted")
+        if refusal:
             event = Event(tag, "tool", tool, meta=b.get("meta") or {})
             return _respond(*self._refused(event, refusal))
         return web.json_response({"admitted": True})
@@ -595,11 +641,3 @@ class Gateway:
                 "calls": u.calls,
             }
         )
-
-    async def _models_view(self, _: web.Request) -> web.Response:
-        aliases = self.models.aliases.items()
-        data = [{"id": a, "object": "model", "owned_by": v.upstream} for a, v in aliases]
-        return web.json_response({"object": "list", "data": data})
-
-    async def _status_view(self, _: web.Request) -> web.Response:
-        return web.json_response(self.status())

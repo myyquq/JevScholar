@@ -50,15 +50,17 @@ def run_dir(tmp_path):
             tmp_path / "drb2" / system / "tasks" / key / "result.json",
             {"status": status, "report": rep},
         )
+    ok = {"total": "ok", "blocked_rate": "ok"}
     evals = {
-        ("simple_rag", "1"): {"metrics": {"total": 0.2, "blocked_rate": None}},
-        ("simple_rag", "2"): {"metrics": {"total": 0.4, "blocked_rate": None}},
+        ("simple_rag", "1"): {"metrics": {"total": 0.2, "blocked_rate": None}, "status": ok},
+        ("simple_rag", "2"): {"metrics": {"total": 0.4, "blocked_rate": None}, "status": ok},
         ("simple_rag", "3"): {"metrics": {}, "error": "Traceback: judge down"},
         ("deepscholar_base", "1"): {
             "metrics": {"total": 0.8, "blocked_rate": 0.5},
+            "status": ok,
             "diagnostics": {"n_docs": 3},
         },
-        ("deepscholar_base", "2"): {"metrics": {"total": 0.5, "blocked_rate": 0.0}},
+        ("deepscholar_base", "2"): {"metrics": {"total": 0.5, "blocked_rate": 0.0}, "status": ok},
     }  # stub
     for (system, key), ev in evals.items():
         _write(tmp_path / "drb2" / system / "eval" / "deepseek" / f"{key}.json", ev)
@@ -406,3 +408,61 @@ def test_sample_groups_merge_only_samples_of_one_system():
     groups = analysis.sample_groups({"experiment": experiment})
     assert groups == {"simple_rag": "simple_rag", "closed_book": "closed_book", "k20": "k20",
                       "k20_s1": "k20"}  # fmt: skip
+
+
+def test_writer_pick_prefers_abstract_coverage_and_cited_sentences():
+    abstract = "Sparse retrieval improves grounding of language model citations."
+    cited = "Sparse retrieval was studied for grounding language model outputs in prior work [1]."
+    uncited = "Sparse retrieval was studied for grounding language model outputs in prior work."
+    off = "Graph neural networks were studied for molecule property prediction tasks [2]."
+    f = analysis.pick_features(cited, abstract)
+    assert f["uncited"] == 0 and f["abstract_recall"] == pytest.approx(5 / 7)
+    assert analysis.pick_features(uncited, abstract)["uncited"] == 1
+    assert analysis.writer_pick([uncited, cited], abstract) == 1  # same coverage, cited
+    assert analysis.writer_pick([off, cited], abstract) == 1  # covers the abstract
+    assert analysis.writer_pick([cited, cited], abstract) == 0  # ties: the first
+    long_uncited = " ".join(["Graph neural networks were applied to molecules in many ways."] * 5)
+    assert analysis.writer_pick(["", long_uncited], abstract) == 1  # a blank report: never
+    assert analysis.writer_pick([None, " "], abstract) == 0  # all failed: the first
+
+
+def test_best_of_n_picks_by_text_charges_every_write_and_tests_non_inferiority():
+    abstract = "Sparse retrieval improves grounding of language model citations."
+    cited = "Sparse retrieval was studied for grounding language model outputs in prior work [1]."
+    uncited = cited.replace(" [1]", "")
+    unjudged = dict.fromkeys(analysis.judged_metrics("deepscholar"), math.nan)
+
+    def frame(rows):  # (task, sample, text, N, R_c, cost, W)
+        return pd.DataFrame(
+            [unjudged | {"task": t, "sample": k, "text": text, "abstract": abstract,
+                         "has_report": text is not None, "nugget_coverage": n,
+                         "reference_recall": r, "cite_p": 0.5 * bool(text),
+                         "claim_support": 0.5 * bool(text), "cost_usd": c, "W": w}
+             for t, k, text, n, r, c, w in rows]
+        )  # fmt: skip
+
+    arm = frame(
+        [("a", 0, uncited, 0.2, 0.1, 0.05, 0.01), ("a", 1, cited, 0.4, 0.3, 0.03, 0.004),
+         ("b", 0, cited, 0.5, 0.2, 0.06, 0.02), ("b", 1, cited, 0.1, 0.0, 0.03, 0.005),
+         ("c", 0, None, 0.0, 0.0, 0.02, 0.0), ("c", 1, uncited, 0.3, 0.4, 0.03, 0.006)]
+    )  # fmt: skip
+    base = frame(
+        [(t, k, cited, n, r, 0.2, 0.0) for t, ns, r in (("a", (0.4, 0.4), 0.3),
+         ("b", (0.5, 0.5), 0.2), ("c", (0.2, 0.4), 0.4)) for k, n in enumerate(ns)]
+    )  # fmt: skip
+    x = analysis.best_of(arm)
+    assert x["sample"].tolist() == [1, 0, 1]  # coverage and citations, a tie, never a failure
+    assert x.cost_usd.tolist() == pytest.approx([0.03 + 0.01, 0.06 + 0.005, 0.03 + 0.0])
+    assert x.U["a"] == pytest.approx(0.4 + 0.15 * 0.3 + 0.05 + 0.05 - 0.1 * 0.04 / 0.27)
+    out = analysis.best_of_n(arm, base)
+    n = out["metrics"]["nugget_coverage"]
+    assert n["diff"] == pytest.approx(0.0) and n["p_ni"] == 0.25  # 2 of 2^3 sign vectors
+    assert out["claim"]["p"] == 0.25 and not out["claim"]["holds"]
+    assert out["picks"] == {0: 1, 1: 2} and out["unjudged"]["organization"] == 12
+    worse = analysis.best_of_n(arm, base.assign(reference_recall=base.reference_recall + 0.1))
+    assert worse["claim"]["reference_recall"] == {"p": 0.25, "sign_ok": False}
+    assert worse["claim"]["p"] == 1.0  # a wrong sign
+    with pytest.raises(ValueError, match="nugget_coverage"):  # never scored 0
+        analysis.best_of_n(arm, base.assign(nugget_coverage=[math.nan, *base.nugget_coverage[1:]]))
+    with pytest.raises(ValueError, match="more than one run"):
+        analysis.best_of_n(arm, pd.concat([base, base]))

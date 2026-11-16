@@ -89,12 +89,12 @@ def gold_found(task: Task, ids: set[str | None], titles: set[str]) -> tuple[int,
 class DeepScholarBench(Benchmark):
     name = "deepscholar"
     metrics = METRICS
-    judged = (  # organization, relevance rate and document importance only on request
-        "nugget_coverage", "cite_p", "claim_coverage", "claim_support",
+    judged = (  # relevance rate and document importance only on request
+        "nugget_coverage", "organization", "cite_p", "claim_coverage", "claim_support",
         "reference_coverage", "reference_recall",
     )  # fmt: skip
     primary = "nugget_coverage"
-    cap_usd = 0.27  # B0: DS-base intro's most expensive dev task ($0.243) x 1.1
+    cap_usd = 0.27  # B0: just above DS-base intro's most expensive June dev task ($0.266; docs/04)
     reliability = ("cite_p", "cite_p_per_citation", "claim_coverage", "claim_support")
     secondary = ("reference_coverage", "reference_recall")
     derived_from: ClassVar[dict[str, str]] = {  # derived metrics share their source's status
@@ -131,8 +131,8 @@ class DeepScholarBench(Benchmark):
         """`cite_p_per_citation`: the share of supported citations, the paper's definition
         ("averaging the precision of each citation"). Upstream's CitePEvaluator instead averages
         per sentence and scores uncited sentences 0: the authors' own reports (vendored fixtures)
-        score 0.79 by the first and 0.46 by the second, so only the first is comparable with the
-        paper. `nugget_vital` / `nugget_okay`: nugget coverage over the vital / okay nuggets
+        score 0.773 by the first and 0.438 by the second, so only the first is comparable with
+        the paper. `nugget_vital` / `nugget_okay`: nugget coverage over the vital / okay nuggets
         alone, where the eval file keeps the nugget assignments."""
         if not ev.get("metrics"):
             return {}

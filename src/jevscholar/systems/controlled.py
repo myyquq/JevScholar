@@ -25,7 +25,19 @@ does not prepare that step again and re-reads the pages fetched before for free,
 to that point is reported as `offset_usd`. With `take` it executes that candidate there instead
 of asking the policy (a counterfactual branch, controller/branches.py), logged as `taken`.
 `sample` > 0 gives the writer its own replay namespace: an independent sample from the same
-evidence.
+evidence. With `write: false` the episode ends once the writer's documents are chosen (ranking
+included): a retrieval-only run, whose label needs those documents but no section; its empty
+report is never judged.
+
+On a research-report task (DRB2: `meta["request"]`, the prompt without its forbidden-source rule)
+the abstract search is a prompt search with the request as its query, and the proposer and d1
+read report wording. With the web among the corpora, the prompt search's list is first one
+Tavily search for REQUEST_WEB_K hits (the query cut to Tavily's WEB_QUERY_CHARS), then its arXiv
+ranked list; a proposed keyword query's first page comes from the web while the task has web
+operations left (`search.web_ops`), else from arXiv; `deepen` reads arXiv only and passes over a
+query whose first page came from the web. Web hits are screened from their snippets, and their
+pages, kept apart from arXiv's, are not logged in pages.jsonl (a report task's decision point is
+not restored with them).
 """
 
 from __future__ import annotations
@@ -44,7 +56,7 @@ from pydantic import Field, SerializerFunctionWrapHandler, model_serializer
 
 from jevscholar import paths
 from jevscholar.artifacts import task_dir
-from jevscholar.controller.policy import Decision, Policy, make_policy
+from jevscholar.controller.policy import D1Policy, Decision, Policy, make_policy
 from jevscholar.controller.prompt import label
 from jevscholar.controller.state import (
     ABSTRACT_K,
@@ -69,14 +81,16 @@ from jevscholar.controller.state import (
     snapshot,
 )
 from jevscholar.render import finalize
+from jevscholar.search import ToolError
 from jevscholar.systems import chat
 from jevscholar.systems import deepscholar_base as dsb
 from jevscholar.types import Report, Strict, System, Task, TaskContext
 from jevscholar.util import read_jsonl
 
-MAX_DECISIONS = 40  # a guard: the batch cap ends every episode long before
 DEEPEN_FETCHES = 2  # new pages the deepen scan may fetch per step (pages fetched before are free)
 PROPOSE_TOKENS = 100  # one query: bounds a proposal's cost
+REQUEST_WEB_K = 20  # web hits of a report task's prompt search
+WEB_QUERY_CHARS = 400  # Tavily refuses longer queries
 PROPOSE = """You are searching arXiv for the prior work needed to write the related-work section
 of the paper described in the task below. Write one new search query (3-10 keywords) that would
 find relevant papers the searches so far have missed. Output the query only, nothing else.
@@ -89,6 +103,10 @@ Searches so far (new papers, relevant):
 
 Relevant papers found so far:
 {titles}"""
+REPORT_PROPOSE = (  # a report task's: its own first sentence, then PROPOSE's
+    "You are searching for the sources needed to write the research report the task below asks "
+    "for. " + PROPOSE.partition("in the task below. ")[2]
+)
 LIST_ITEM = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 
 
@@ -124,11 +142,27 @@ class Controlled(System):
         costs: dict[str, float] = Field(default_factory=dict)  # Costs overrides
         start: Start | None = None
         sample: int = 0  # > 0: an independent writer sample
+        write: bool = True  # False: stop once the writer's documents are chosen
+
+        @model_serializer(mode="wrap")
+        def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+            """Without `write: false`, the fields the parameters had before `write` existed: the
+            cell identity of every writing run stays the same."""
+            out = handler(self)
+            if self.write:
+                out.pop("write", None)
+            return out
 
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__(params)
         self.costs = Costs(**self.p.costs)
         make_policy(self.p.policy)  # fail at construction, not on the first task
+
+    def preflight(self) -> None:
+        """A d1 policy's server must serve the policy's adapter."""
+        policy = make_policy(self.p.policy)
+        if isinstance(policy, D1Policy):
+            policy.preflight()
 
     def identity(self) -> dict[str, Any]:
         """The policy with its defaults (d1's profile) resolved, as well as the parameters (where
@@ -143,7 +177,9 @@ class Controlled(System):
         budget = ctx.cap_usd if p.budget_usd is None else p.budget_usd
         take = None if p.start is None else p.start.take
         if p.start is None:
-            state = State(task.prompt, budget, task.meta.get("abstract", ""), p.max_batches)
+            request = task.meta.get("request")  # a research report's: searched as the abstract is
+            abstract = request or task.meta.get("abstract", "")
+            state = State(task.prompt, budget, abstract, p.max_batches, report=request is not None)
             first, pages = None, {}
         else:
             point = locate(task, p.start)
@@ -156,9 +192,10 @@ class Controlled(System):
             (ctx.out_dir / "start.json").write_text(json.dumps(record))  # kept if the run fails
         with dsb.task_scope(ctx.search, task.seed, repair_citations=True):
             loop = Loop(ctx, top, self.costs, p.actions, pages, p.sample)
-            docs = await loop.run(state, make_policy(p.policy), first, take)
+            docs = await loop.run(state, make_policy(p.policy), first, take, p.write)
         (ctx.out_dir / "state.json").write_text(state.to_json())
         report = dsb.to_report(state.draft or "", docs)
+        unwritten = {} if p.write else {"written": False}
         return finalize(
             report.text,
             report.sources,
@@ -171,6 +208,7 @@ class Controlled(System):
             relevant=len(state.relevant()),
             spent_usd=state.spent_usd,
             offset_usd=state.offset_usd,
+            **unwritten,
         )
 
 
@@ -210,8 +248,9 @@ class Loop:
         self.screen_cfg = dsb.build_configs(ctx, {"use_sem_topk": False})
         self.write_cfg = dsb.build_configs(ctx, {"use_sem_filter": False}, sample)
         self.agentic = importlib.import_module("deepscholar_base.search.agentic_search")
-        self.arxiv = self.agentic.ToolTypes.ARXIV
+        self.arxiv, self.web = self.agentic.ToolTypes.ARXIV, self.agentic.ToolTypes.WEB
         self.hits: Pages = {}
+        self.web_hits: Pages = {}  # a report task's web pages, apart from arXiv's
         self.rows: dict[str, dict[str, Any]] = {}  # URL -> search row, as logged in rows.jsonl
         out = ctx.out_dir
         self.decisions, self.rows_log, self.pages = (
@@ -228,11 +267,12 @@ class Loop:
         policy: Policy,
         first: list[Candidate] | None = None,
         take: str | None = None,
+        write: bool = True,
     ) -> pd.DataFrame:
-        """Decide and search until `finish`, then write; returns the writer's documents. `first`:
-        the opening decision's candidates, as a snapshot saved them, so that step is not
-        prepared (nor paid for) again. `take`: the kind of candidate the opening decision
-        executes, without asking the policy."""
+        """Decide and search until `finish`, then choose the writer's documents and write (not
+        with `write` False); returns the documents. `first`: the opening decision's candidates,
+        as a snapshot saved them, so that step is not prepared (nor paid for) again. `take`: the
+        kind of candidate the opening decision executes, without asking the policy."""
         self.keep_rows([p.row for p in state.papers] + [r for c in first or () for r in c.rows])
         proposed = None if first is None else self.restored(state, first)
         while state.phase == "retrieval":
@@ -241,8 +281,6 @@ class Loop:
                 proposed = await self.prepare(state)
                 self.sync(state)
             offered = legal(state, proposed, self.costs)
-            if state.decisions >= MAX_DECISIONS:
-                offered = offered[-1:]
             point = snapshot(state, offered, len(self.hits))  # what the policy sees
             before = state.spent_usd
             forced = len(offered) == 1  # the rules leave no choice
@@ -270,7 +308,8 @@ class Loop:
             self.record(point, decision, executed, forced, overridden, control, state, taken)
             proposed = None
         docs = self.documents(state)
-        state.draft = await self.write(state.topic, docs)
+        if write:
+            state.draft = await self.write(state.topic, docs)
         self.sync(state)
         return docs
 
@@ -301,18 +340,26 @@ class Loop:
         if "abstract" in self.actions and (abstract := self.abstract(state)):
             searches.append(abstract)
         if "explore" in self.actions and (query := await self.propose(state)):
-            searches.append(Candidate("explore", query, self.new_rows(state, query, PAGE), PAGE))
+            page = self.web_rows if self.web_on(state) else self.new_rows
+            searches.append(Candidate("explore", query, page(state, query, PAGE), PAGE))
         if "deepen" in self.actions and (deepen := self.deepen(state)):
             searches.append(deepen)
         return [*(replace(c, cost_usd=self.costs.screen(len(c.rows))) for c in searches), finish]
 
     def abstract(self, state: State) -> Candidate | None:
         """The abstract search's next batch: the first PAGE papers of its ranked list that no
-        search has brought yet. None when the access policy blocks the abstract as a query (the
-        search then returns nothing) or the list is used up."""
+        search has brought yet (a report task's prompt search: its web hits first, when it has
+        them). None when the access policy blocks the abstract as a query (the search then
+        returns nothing) or the list is used up."""
         if not state.abstract:
             return None
-        rows = self.new_rows(state, state.abstract, ABSTRACT_K)[:PAGE]
+        web = self.web_on(state) or (state.abstract, REQUEST_WEB_K) in self.web_hits
+        rows = self.web_rows(state, state.abstract, REQUEST_WEB_K) if web else ()
+        if len(rows) < PAGE:  # the arXiv list, fetched once the web hits no longer fill a batch
+            urls = {r["url"] for r in rows}
+            arxiv = self.new_rows(state, state.abstract, ABSTRACT_K)
+            rows += tuple(r for r in arxiv if r["url"] not in urls)
+        rows = rows[:PAGE]
         return Candidate("abstract", state.abstract, rows, ABSTRACT_K) if rows else None
 
     async def propose(self, state: State) -> str | None:
@@ -321,7 +368,7 @@ class Loop:
             f"- {label(state, q.text)} ({q.new}, {q.relevant})" for q in state.queries
         )
         titles = "\n".join(f"- {p.row['title']}" for p in state.relevant()[-20:])
-        prompt = PROPOSE.format(
+        prompt = (REPORT_PROPOSE if state.report else PROPOSE).format(
             topic=state.topic, searches=searches or "(none)", titles=titles or "(none)"
         )
         reply = await chat(self.ctx, "propose", prompt, max_tokens=PROPOSE_TOKENS)
@@ -336,9 +383,15 @@ class Loop:
         """The next page with new papers of the most productive keyword query that still has one
         (relevant per new paper; ties: the earlier query), at most MAX_PAGES pages deep. Pages
         fetched before are re-read for free; the scan fetches at most DEEPEN_FETCHES new ones per
-        step and otherwise resumes in the next."""
+        step and otherwise resumes in the next. A query whose first page came from the web has
+        no arXiv list to follow."""
         fetches = 0
-        keyword = [q for q in state.queries if q.text != state.abstract]
+        keyword = [
+            q
+            for q in state.queries
+            if q.text != state.abstract
+            and ((q.text, PAGE) in self.hits or (q.text, PAGE) not in self.web_hits)
+        ]
         for q in sorted(keyword, key=lambda q: -q.relevant / max(q.new, 1)):
             for k in range(PAGE * (q.pages + 1), PAGE * MAX_PAGES + 1, PAGE):
                 if (q.text, k) not in self.hits:
@@ -359,6 +412,30 @@ class Loop:
             self.remember(query, k, rows.to_dict("records"))
         seen = state.seen()
         return tuple(r for r in self.hits[query, k] if r["url"] not in seen)
+
+    def web_on(self, state: State) -> bool:
+        """Whether a search goes to the web: a report task's, with the web among the corpora and
+        a web operation left."""
+        config = self.ctx.search_config
+        if not (state.report and "web" in config.corpora):
+            return False
+        return config.web_ops is None or self.ctx.search.stats["web"] < config.web_ops
+
+    def web_rows(self, state: State, query: str, k: int) -> tuple[dict[str, Any], ...]:
+        """`new_rows` on the web: DS-base's normalized rows of the query's top-k Tavily hits
+        (snippets, no page read) that no search has brought yet; a failed search brings none."""
+        if (query, k) not in self.web_hits:
+            try:
+                df = dsb.web_search(self.web.to_web_search_corpus(), query[:WEB_QUERY_CHARS], k)
+            except ToolError:
+                df = pd.DataFrame()
+            _, rows = self.agentic._normalize_search_df(
+                df, query, self.web.to_rename_map(), lambda _: "", ""
+            )
+            self.web_hits[query, k] = rows.to_dict("records")
+            self.keep_rows(self.web_hits[query, k])
+        seen = state.seen()
+        return tuple(r for r in self.web_hits[query, k] if r["url"] not in seen)
 
     # ------------------------------------------------------------------ actions
     async def act(self, state: State, c: Candidate) -> None:

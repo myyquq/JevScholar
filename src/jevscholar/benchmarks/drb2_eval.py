@@ -2,7 +2,7 @@
 
 `run_evaluation.py` is imported unchanged and driven per task through its own
 `process_one_with_chunking` (official chunk size 50, 150k characters, 5 retries per batch).
-Runtime changes: PR #8's parser fix (`json.loads` first; the legacy key-quote cleanup corrupts
+Runtime changes: PR #8's parser fix (`json.loads` first; upstream's key-quote cleanup corrupts
 compact JSON, which a forced `json_object` judge emits), and the module-global client set per task
 (one task at a time per worker) so every judge call carries the task's gateway tag. Upstream
 swallows request errors; a batch that still fails after its retries raises here, so the runner
@@ -38,14 +38,14 @@ def upstream() -> tuple[Any, Any]:
     import aggregate_scores
     import run_evaluation
 
-    legacy = run_evaluation._try_clean_and_load
+    upstream_load = run_evaluation._try_clean_and_load
 
     def pr8_load(s: str) -> Any:
         text = s.strip()
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            return legacy(text)
+            return upstream_load(text)
 
     run_evaluation._try_clean_and_load = pr8_load
     return run_evaluation, aggregate_scores

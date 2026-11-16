@@ -16,7 +16,8 @@ is not a decision. The rules here are the loop's hard rules: they keep the candi
 choose from, and leave a policy no say where only one is left. A search is legal only within the
 batch cap, if it brings a paper no other candidate brings, and if after it another step's
 overhead and the writing still fit, whatever it adds; finishing waits for a first relevant paper
-while a search is still possible.
+while a search is still possible. On a research-report task (`report`, DRB2) the abstract search
+is the prompt search: `abstract` holds the research request.
 """
 
 from __future__ import annotations
@@ -71,6 +72,7 @@ class State:
     decisions: int = 0  # decision points passed
     docs: list[str] = field(default_factory=list)  # the writer's documents (URLs), once ranked
     draft: str | None = None  # the written section (DS-base markdown), once written
+    report: bool = False  # a research-report task: `abstract` is its research request
 
     @property
     def remaining_usd(self) -> float:
@@ -186,11 +188,15 @@ class Point:
 
 def snapshot(state: State, candidates: list[Candidate], fetched: int) -> dict[str, Any]:
     """A decision point by reference: papers and candidate rows as URLs into rows.jsonl, and the
-    number of search pages fetched so far (the first `fetched` records of pages.jsonl)."""
+    number of search pages fetched so far (the first `fetched` records of pages.jsonl). A state
+    that is not a report task's is saved as before `report` existed."""
     papers = [[p.url, p.relevant] for p in state.papers]
+    saved = asdict(state) | {"papers": papers}
+    if not state.report:
+        del saved["report"]
     return {
         "version": SNAPSHOT,
-        "state": asdict(state) | {"papers": papers},
+        "state": saved,
         "candidates": [c.ref() for c in candidates],
         "fetched": fetched,
     }

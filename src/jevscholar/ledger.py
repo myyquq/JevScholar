@@ -2,12 +2,13 @@
 
 The ledger is the single source of truth for cost tables, task status and controller costs, so
 each line records everything known at that moment: tokens split into cache miss / hit / output /
-reasoning, list and billed cost, latency, attempt, and the gateway session that wrote it (a resumed
-task's replayed rows can then be told apart from its abandoned first execution). Two prices are
-kept on purpose. List price is what task budgets compare against, so a cache replay spends exactly
-what the original run spent. Billed price is what the provider actually charges: DeepSeek's
-off-peak discount, and $0 for replays, local servers and free tools. The run and campaign caps
-limit it.
+reasoning, list and billed cost, latency, attempt, the model version that answered (the reply's
+`system_fingerprint`: a provider can change the model behind an alias), and the gateway session
+that wrote it (a resumed task's replayed rows can then be told apart from its abandoned first
+execution). Two prices are kept on purpose. List price is what task budgets compare against, so
+a cache replay spends exactly what the original run spent. Billed price is what the provider
+actually charges: DeepSeek's off-peak discount, and $0 for replays, local servers and free tools.
+The run and campaign caps limit it.
 """
 
 from __future__ import annotations
@@ -72,6 +73,7 @@ class Event:
     cached: bool = False
     latency_s: float = 0.0
     error: str | None = None
+    fingerprint: str | None = None  # the reply's system_fingerprint: which model version answered
     notes: list[str] = field(default_factory=list)  # request rewrites (deviation register)
     meta: dict[str, Any] = field(default_factory=dict)
     ts: datetime = field(default_factory=lambda: datetime.now(UTC))

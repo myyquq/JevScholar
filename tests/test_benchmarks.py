@@ -17,6 +17,7 @@ from jevscholar import data
 from jevscholar.benchmarks.deepscholar import DeepScholarBench, query_template
 from jevscholar.benchmarks.drb2 import DRB2
 from jevscholar.benchmarks.researchqa import INSTRUCTION, ResearchQA
+from jevscholar.search.policy import text_allowed
 from jevscholar.types import Report, Source, TaskResult
 
 FETCHED = (data.RAW / "deepscholar/nov2025/gt_nuggets_outputs").is_dir()
@@ -27,6 +28,10 @@ PAPER = {
     "categories": "cs.LG, q-bio.BM",
     "published_date": "2025-09-27T11:12:04+00:00",
 }
+DRB2_RULE = (  # how every official DRB2 prompt ends
+    "\n\n**important**The following is a rule of highest priority: you are not allowed to view "
+    "the following article and urls: {'title': 'A Blocked Article'}"
+)
 ATTENTION = Source(
     id="1706.03762v7",
     url="http://arxiv.org/abs/1706.03762v7",
@@ -127,7 +132,7 @@ def fake_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]
         "idx": 47,
         "language": "zh",
         "theme": "Finance",
-        "prompt": "写一份报告 {不要}",
+        "prompt": "写一份报告 {不要}" + DRB2_RULE,
         "content": {
             "blocked": {
                 "title": "A Blocked Article",
@@ -193,7 +198,10 @@ def test_task_policy_and_export(fake_data: Path, bench: str) -> None:
         assert answer.startswith("Prior work [1] exists.") and "Leak" not in answer
         assert data.read_json(fake_data / "empty/q1-s1.json") == {"answer": ""}
     else:
-        assert task.id == "47" and task.prompt == "写一份报告 {不要}" and task.policy.cutoff is None
+        assert task.id == "47" and task.prompt == "写一份报告 {不要}" + DRB2_RULE
+        assert task.meta["request"] == "写一份报告 {不要}" and task.policy.cutoff is None
+        assert not text_allowed(task.prompt, task.policy)  # it names the blocked article
+        assert text_allowed(task.meta["request"], task.policy)
         assert task.policy.blocked_urls == {"https://arxiv.org/abs/2401.00001"}
         assert task.policy.blocked_arxiv == {"2401.00001"}
         assert task.policy.blocked_titles == ("a blocked article",)
@@ -203,11 +211,15 @@ def test_task_policy_and_export(fake_data: Path, bench: str) -> None:
 
 
 def test_the_final_test_is_frozen():
-    """test[:90]: the first 90 Nov test tasks, identified by the hash of their ids."""
+    """The 180 Nov test tasks in their two halves, identified by the hashes of their ids."""
     import hashlib
 
     from jevscholar.benchmarks import split_ids
 
-    ids = split_ids("deepscholar", "test", 90)
-    assert (ids[0], ids[-1]) == ("2511.09143v2", "2509.19586v1")
-    assert hashlib.sha256("\n".join(ids).encode()).hexdigest()[:16] == "66bd8fa271d545da"
+    ids = split_ids("deepscholar", "test", None)
+    first, second = ids[:90], ids[90:]
+    assert len(second) == 90
+    assert (first[0], first[-1]) == ("2511.09143v2", "2509.19586v1")
+    assert hashlib.sha256("\n".join(first).encode()).hexdigest()[:16] == "66bd8fa271d545da"
+    assert (second[0], second[-1]) == ("2511.10539v1", "2510.00351v1")
+    assert hashlib.sha256("\n".join(second).encode()).hexdigest()[:16] == "e391d433eb4366a6"

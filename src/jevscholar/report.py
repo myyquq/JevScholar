@@ -71,9 +71,13 @@ def write_report(
     for (_, system), cap in caps.items():
         by_cap.setdefault(cap, []).append(system)
     cap_list = "; ".join(f"${c:g}: {', '.join(dict.fromkeys(s))}" for c, s in by_cap.items())
+    calls = ledger[ledger.kind == "llm"].fillna({"fingerprint": "unrecorded"})
+    versions = calls.groupby(["name", "fingerprint"]).size()
+    version_list = "; ".join(f"{name} `{fp}` ({n})" for (name, fp), n in versions.items())
     sections = [
         f"# Report: {manifest['run_id']}",
         f"Experiment `{exp['name']}`, judges `{judgeset}`, code {sha}. All scores are **{label}**.",
+        f"Model versions (each reply's `system_fingerprint`, calls): {version_list or 'none'}.",
         f"## Primary metrics ({label})",
         "primary = mean over the split prefix (failed or missing generations = 0; unjudged "
         "metrics leave their task out, see n_unjudged); official = mean over valid tasks only, "

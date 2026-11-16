@@ -96,8 +96,9 @@ def cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Store:
 
 @pytest.fixture
 def gateway() -> Iterator[SimpleNamespace]:
-    """A fake gateway that records /admit and /charge bodies and refuses admits while `refuse`."""
-    gw = SimpleNamespace(admits=[], charges=[], refuse=False)
+    """A fake gateway that records /admit and /charge bodies and refuses admits while `refuse`
+    (with HTTP `status`)."""
+    gw = SimpleNamespace(admits=[], charges=[], refuse=False, status=402)
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
@@ -107,7 +108,7 @@ def gateway() -> Iterator[SimpleNamespace]:
             refused = admit and gw.refuse
             answer = {"error": {"code": "budget_exhausted", "message": "spent"}} if refused else {}
             out = json.dumps(answer).encode()
-            self.send_response(402 if refused else 200)
+            self.send_response(gw.status if refused else 200)
             self.send_header("Content-Length", str(len(out)))
             self.end_headers()
             self.wfile.write(out)
@@ -234,7 +235,7 @@ def test_client_arxiv_filters_and_charges(cache: Store, monkeypatch, gateway) ->
         (f"/t/{TAG}/charge", "arxiv_search", True, 1),
     ]
     assert gateway.charges[0]["meta"]["backend"] == "arxiv"
-    assert client.stats == {"calls": 2, "errors": 0, "blocked": 2, "cached": 1}
+    assert client.stats == {"calls": 2, "errors": 0, "blocked": 2, "cached": 1, "web": 0}
     # The id cache is shared, the policy is not: an uncut task sees the post-cutoff paper.
     other = SearchClient(gateway.url, "run:bench:sys:t2:agent", AccessPolicy())
     assert set(other.arxiv_lookup(["2506.01234"])) == {"2506.01234"}
@@ -299,6 +300,28 @@ def test_client_web_search_and_read(cache: Store, monkeypatch, gateway) -> None:
     with pytest.raises(BudgetExhausted):
         client.web_search("agent memory", 5)
     assert len(tv.calls) == 1 and client.stats["errors"] == 1
+
+
+def test_client_counts_web_operations_and_fails_past_the_limit(cache, monkeypatch, gateway):
+    """Fresh, cached and failed web calls count once each, a blocked query not; a web call the
+    gateway refuses (429) is a ToolError that never reaches Tavily and is never charged."""
+    hits = [{"title": "x", "url": "https://a.example/x", "content": "c", "published_date": None}]
+    tv = fake(monkeypatch, tavily, "post", Resp(200, payload={"results": hits}), page("Text."))
+    client = SearchClient(gateway.url, TAG, AccessPolicy(blocked_titles=(TITLE,)), tavily_key="k")
+    assert client.web_search("graph agents", 5) == client.web_search("graph agents", 5) == hits
+    assert client.web_read("https://a.example/x") == "Text."
+    assert client.web_search(f"{TITLE} follow-ups", 5) == []  # blocked: never admitted
+    tv = fake(monkeypatch, tavily, "post", Resp(400, b"bad request"))
+    with pytest.raises(ToolError, match="400"):
+        client.web_search("agent memory", 5)
+    assert client.stats == {"calls": 4, "errors": 1, "blocked": 1, "cached": 1, "web": 4}
+    gateway.refuse, gateway.status, charged = True, 429, len(gateway.charges)
+    with pytest.raises(ToolError):
+        client.web_search("agent planning", 5)
+    with pytest.raises(ToolError):
+        client.web_read("https://a.example/x")
+    assert len(tv.calls) == 1 and len(gateway.charges) == charged
+    assert client.stats == {"calls": 4, "errors": 1, "blocked": 1, "cached": 1, "web": 4}
 
 
 # --------------------------------------------------------------------------- OpenAlex

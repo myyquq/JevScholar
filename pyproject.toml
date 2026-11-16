@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = "==3.12.*"            # LOTUS @4665619 requires >=3.10,<3.13
 dependencies = [
     "aiohttp>=3.12,<4",                 # LLM gateway (server + upstream client)
-    "bm25s>=0.2",                       # local arXiv BM25 index (fallback backend)
+    "bm25s>=0.2",                       # the local arXiv BM25 index (the default backend)
     "numpy>=1.26",
     "openai>=2.45,<3",                  # every litellm release and openai-agents 0.20 need openai 2.x
     "pandas>=2.2,<3",

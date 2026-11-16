@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 Status = Literal["ok", "partial", "degraded", "failed", "budget_exhausted"]
 LOCAL_KEY = "jev-local"  # dummy API key every client sends to the gateway
-CLIENT_TIMEOUT_S = 1300  # longer than the gateway's upstream timeout plus its internal retries
+CLIENT_TIMEOUT_S = 1300  # longer than one upstream attempt; a client gone during retries is metered
 JUDGE_PREFIX = "judge."  # stage prefix of every judge call (own budget key, never cached)
 
 
@@ -183,7 +183,7 @@ class EvalContext:
     run: str
     system: str
     judgeset: str  # e.g. "deepseek" | "official"
-    judges: dict[str, str]  # {"default": alias, <metric>: alias} (runner.judges_for)
+    judges: dict[str, str]  # {"default": alias, <metric>: alias} (judging.judges_for)
     out_dir: Path  # eval/<judgeset>/ of this (bench, system) cell
     metrics: tuple[str, ...] = ()  # judge only these (Benchmark.metrics); empty: every metric
     log: logging.Logger = field(default_factory=lambda: logging.getLogger("jevscholar"))
@@ -220,6 +220,10 @@ class System:
     def identity(self) -> dict[str, Any]:
         """What the system does, defaults resolved: part of every cell's identity."""
         return {"version": self.version, "params": self.p.model_dump(mode="json")}
+
+    def preflight(self) -> None:
+        """Fail before any task is dispatched if what the system needs outside the gateway is
+        not there (nothing by default)."""
 
     async def run(self, ctx: TaskContext) -> Report:
         raise NotImplementedError

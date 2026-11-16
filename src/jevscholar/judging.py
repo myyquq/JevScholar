@@ -201,8 +201,9 @@ def judges_for(judgeset: dict[str, str], bench: str) -> dict[str, str]:
 
 
 def judge_routing(models: ModelsConfig, judges: dict[str, str]) -> dict[str, Any]:
-    """What shapes each judge's requests: its alias's model settings and its upstream's endpoint
-    and dialect (names, prices and the never-used judge cache flag left out)."""
+    """What shapes each judge's requests: its alias's model settings, its upstream's endpoint and
+    dialect, and its model's pinned version (names, prices and the never-used judge cache flag
+    left out)."""
     out = {}
     for key, name in judges.items():
         alias = models.aliases[name]
@@ -211,6 +212,7 @@ def judge_routing(models: ModelsConfig, judges: dict[str, str]) -> dict[str, Any
             "url": upstream.base_url,
             "dialect": upstream.dialect,
         }
+        out[key] |= models.pin(alias)
     return out
 
 

@@ -135,6 +135,7 @@ def reply(content: str = "ok", finish: str = "stop") -> dict:
         "object": "chat.completion",
         "created": 0,
         "model": "flash",
+        "system_fingerprint": "fp_v1",
         "choices": [choice],
         "usage": usage,
     }
@@ -199,12 +200,14 @@ def make_gw(tmp_path: Path, fake: Fake, monkeypatch: pytest.MonkeyPatch) -> Iter
             "judge": Alias(upstream="ds", model="flash", thinking=False, price=price),
             "local": Alias(upstream="local", model="qwen", price=price),
         },
-        tools={"arxiv_search": 0.01, "tavily_search": 0.02},
+        tools={"arxiv_search": 0.01, "tavily_search": 0.02, "tavily_extract": 0.02},
         free_tools=("arxiv_search",),
     )
     started: list[Gateway] = []
 
-    def make(budget: Budget | None = None, *, replay_only: bool = False) -> Gateway:
+    def make(
+        budget: Budget | None = None, *, replay_only: bool = False, web_ops: int | None = None
+    ) -> Gateway:
         budget = budget or Budget()
         gw = Gateway(
             models,
@@ -214,6 +217,7 @@ def make_gw(tmp_path: Path, fake: Fake, monkeypatch: pytest.MonkeyPatch) -> Iter
             secrets={"DS_KEY": "sk-test"},
             cache_dir=tmp_path / "cache",
             replay_only=replay_only,
+            web_ops=web_ops,
         )
         gw.start()
         started.append(gw)
@@ -281,6 +285,7 @@ def test_cache_replays_by_occurrence(make_gw: Callable, fake: Fake) -> None:
         ("judge.cite_p", False, None),
     ]
     assert rows[0]["cost_usd"] == pytest.approx(COST) and rows[0]["billed_usd"] == 0
+    assert {e["fingerprint"] for e in rows} == {"fp_v1"}  # replayed and fresh replies alike
     assert usage(gw, ablation)["spent_usd"] == pytest.approx(3 * COST)
     # a client that gives up mid-call: the upstream call completes and is metered, but only the
     # retry the client sends instead is stored, so a replay sees what the client saw
@@ -381,6 +386,30 @@ def test_tools_admit_charge_storm_and_breaker(make_gw: Callable, fake: Fake) -> 
     assert len(fake.seen) == 8
 
 
+def test_web_operations_are_counted_per_task_and_refused_past_the_limit(make_gw, fake):
+    """Every admitted Tavily call counts, whatever its outcome; the one past the limit is refused
+    (429, recorded); arXiv never counts, each task has its own count, a budget refusal none."""
+    gw = make_gw(Budget(task_usd=0.03), web_ops=2)
+
+    def post(route: str, tool: str, tag: str = TAG, **body: Any) -> requests.Response:
+        return requests.post(f"{gw.url}/t/{tag}/{route}", json={"tool": tool, **body}, timeout=10)
+
+    tools = ("tavily_search", "arxiv_search", "tavily_extract", "arxiv_search")
+    assert [post("admit", t).status_code for t in tools] == [200] * 4
+    r = post("admit", "tavily_search", meta={"query": "q"})
+    assert r.status_code == 429 and code(r) == "web_ops_exhausted"
+    refused = events(gw)[-1]
+    assert (refused["http_status"], refused["error"], refused["meta"]) == (
+        429, "web_ops_exhausted", {"query": "q"})  # fmt: skip
+    assert post("admit", "arxiv_search").status_code == 200
+    other = make_tag("r1", "deepscholar", "sysA", "t2", "gen")
+    assert post("admit", "tavily_search", other).status_code == 200  # its own count
+    post("charge", "tavily_search", other, n=2)  # $0.04 >= its $0.03 cap
+    r = post("admit", "tavily_search", other)
+    assert r.status_code == 402 and code(r) == "budget_exhausted"
+    assert gw._web == {gateway._key(TAG): 2, gateway._key(other): 1}  # the refusal not counted
+
+
 async def test_openai_sdk_retries_and_upstream_breaker(make_gw: Callable, fake: Fake) -> None:
     gw = make_gw()
     async with openai.AsyncOpenAI(
@@ -415,9 +444,7 @@ async def test_openai_sdk_retries_and_upstream_breaker(make_gw: Callable, fake: 
         with pytest.raises(openai.APIStatusError) as e:
             await create(model="judge", messages=MSG)
         assert e.value.status_code == 402 and e.value.code == "circuit_open"
-    assert "Insufficient Balance" in requests.get(f"{gw.url}/status", timeout=10).json()["tripped"]
-    models = requests.get(f"{gw.url}/v1/models", timeout=10).json()["data"]
-    assert [m["id"] for m in models] == ["exec", "judge", "local"]
+    assert "Insufficient Balance" in gw.status()["tripped"]
 
 
 def test_cache_never_replays_another_upstreams_reply(make_gw: Callable, fake: Fake) -> None:
@@ -496,3 +523,41 @@ def test_a_departed_clients_fatal_error_trips_the_breaker_before_the_queue_moves
             gone.result()
     assert queued.status_code == 402 and queued.json()["error"]["code"] == "circuit_open"
     assert len(fake.seen) == 1 and gw.status()["tripped"]
+
+
+def test_a_pinned_model_fails_closed_on_another_version(make_gw: Callable, fake: Fake) -> None:
+    gw = make_gw()
+    gw.models.versions["flash"] = "fp_v1"
+    assert content(chat(gw)) == "reply 1"  # the pinned version: answered and stored
+    gw.models.versions["flash"] = "fp_v2"
+    gw2 = make_gw()
+    r = chat(gw2)  # the stored reply is of another version: never replayed
+    assert r.status_code == 402 and code(r) == "circuit_open"
+    assert "fp_v1" in r.json()["error"]["message"] and len(fake.seen) == 1
+    assert code(chat(gw2, messages=[{"role": "user", "content": "other"}])) == "circuit_open"
+
+    gw3 = make_gw()
+    other = [{"role": "user", "content": "fresh"}]
+    r = chat(gw3, messages=other)  # a fresh reply of another version: metered, not stored
+    assert r.status_code == 402 and code(r) == "circuit_open" and len(fake.seen) == 2
+    stale = events(gw3)[-1]  # the gateways share one ledger
+    assert (stale["fingerprint"], stale["cached"]) == ("fp_v1", False) and stale["cost_usd"] > 0
+    assert "not the pinned fp_v2" in stale["error"]
+    gw.models.versions.clear()
+    assert content(chat(make_gw(), messages=other)) == "reply 3"  # it was never stored
+
+    gw.models.versions["flash"] = "fp_v2"  # a retryable reply of another version: no retry
+    fake.script = [(200, reply("busy", finish="insufficient_system_resource"))] * 3
+    r = chat(make_gw(), messages=[{"role": "user", "content": "busy"}])
+    assert code(r) == "circuit_open" and len(fake.seen) == 4 and len(fake.script) == 2
+
+
+def test_the_version_probe_reports_or_refuses(make_gw: Callable, fake: Fake) -> None:
+    gw = make_gw()
+    gw.models.versions["flash"] = "fp_v1"
+    assert gateway.probe_version(gw.url, "judge") == "fp_v1"
+    assert fake.seen[-1]["max_tokens"] == 5
+    gw.models.versions["flash"] = "fp_v2"
+    with pytest.raises(RuntimeError, match="not the pinned fp_v2"):
+        gateway.probe_version(gw.url, "judge")
+    gw.models.versions.clear()

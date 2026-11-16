@@ -1,10 +1,8 @@
-"""d1 decision model: examples, option shuffling, batching, metrics and trajectory labels (pure);
-readout parity with the checkpoint's own `system_one` and a learning check (`-m gpu`, in
-`.venv-train`)."""
+"""d1 decision model: examples, option shuffling, batching and metrics (pure); readout parity with
+the checkpoint's own `system_one` and a learning check (`-m gpu`, in `.venv-train`)."""
 
 from __future__ import annotations
 
-import json
 import math
 import random
 
@@ -16,7 +14,9 @@ from jevscholar.controller.d1 import (
     calibration,
     load_recipe,
     read_examples,
+    regret,
     reorder,
+    selection_key,
     shuffled,
     write_examples,
 )
@@ -76,80 +76,50 @@ def test_training_recipes_resolve(tmp_path):
 
     cfg = load_recipe(CONFIGS / "training.yaml", "sanity")
     assert cfg.train == ROOT / "data/derived/controller/sanity/train.jsonl"
-    assert (cfg.epochs, cfg.accum, cfg.init_adapter) == (2, 4, None)
+    assert (cfg.epochs, cfg.accum, cfg.dev_points) == (2, 4, None)
+    sft = load_recipe(CONFIGS / "training.yaml", "sft")  # the registered warm start (docs/06)
+    assert (sft.lr, sft.schedule, sft.warmup, sft.accum, sft.epochs, sft.seed) == (
+        5e-5, "constant", 0.0, 1, 2, 0
+    )  # fmt: skip
+    assert sft.dev_points == ROOT / "data/derived/controller/sft/dev.points.jsonl"
+    rl1 = load_recipe(CONFIGS / "training.yaml", "rl1")  # the registered RL round
+    assert (rl1.kind, len(rl1.points), rl1.samples, rl1.lr, rl1.optimizer_steps) == (
+        "rl", 8, 4, 2e-5, 4
+    )  # fmt: skip
+    assert len({k for k, _ in rl1.points}) == 8 and all(3 <= b <= 5 for _, b in rl1.points)
+    assert rl1.reference == rl1.init_adapter == ROOT / "runs/controller/sft/adapter"
     recipes = tmp_path / "t.yaml"
-    recipes.write_text("rl: {train: a.jsonl, dev: b.jsonl, out: o, init_adapter: sft/adapter}\n")
-    assert load_recipe(recipes, "rl").init_adapter == ROOT / "sft/adapter"
+    recipes.write_text("rl: {train: a.jsonl, dev: b.jsonl, out: o}\n")
+    assert load_recipe(recipes, "rl").train == ROOT / "a.jsonl"
     with pytest.raises(ValueError, match="no recipe"):
         load_recipe(recipes, "sft")
 
 
-# --------------------------------------------------------------------------- trajectories
-def train_run(tmp_path, monkeypatch, tasks=("t1", "t2")):
-    """A train run with one fixed-policy episode per task: an abstract batch finds gold A, a
-    keyword batch gold B, then the batch cap forces finish."""
-    from jevscholar.controller import data
-    from jevscholar.controller.state import Candidate, Paper, State, snapshot
-    from jevscholar.types import Task
-
-    def row(title):
-        return {"url": f"http://x.org/{title.replace(' ', '_')}", "title": title, "snippet": "s"}
-
-    gold_a, gold_b, other = row("gold a"), row("gold b"), row("other")
-    abstract = Candidate("abstract", "abs", (gold_a, other), 150, 0.001)
-    explore = Candidate("explore", "kw", (row("noise"),), 10, 0.001)
-    keyword = Candidate("explore", "kw2", (gold_b,), 10, 0.001)
-    finish = Candidate("finish")
-    s0 = State("T", 0.27, "abs")
-    s1 = State("T", 0.27, "abs", spent_usd=0.01, batches=1)
-    s1.papers = [Paper(gold_a, True), Paper(other, False)]
-    s2 = State("T", 0.27, "abs", spent_usd=0.02, batches=2)
-    s2.papers = [*s1.papers, Paper(gold_b, True)]
-    steps = [  # (snapshot, executed, forced, the decision's own policy cost)
-        (snapshot(s0, [abstract, explore], 0), 0, False, 0.001),  # left out of the returns
-        (snapshot(s1, [keyword, finish], 0), 0, False, 0.0),
-        (snapshot(s2, [finish], 0), 0, True, 0.0),
+def test_regret_follows_the_deployed_decoder():
+    points = [
+        {"kinds": ["abstract", "explore", "finish"], "returns": [0.03, 0.01, 0.02]},
+        {"kinds": ["abstract", "finish"], "returns": [0.0, 0.01]},
     ]
-    run = tmp_path / "train-run"
-    for task in tasks:
-        folder = run / "deepscholar" / "ctl" / "tasks" / task
-        folder.mkdir(parents=True)
-        rows = [gold_a, gold_b, other, row("noise")]
-        (folder / "rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-        lines = [
-            snap
-            | {"requested": c, "executed": c, "forced": f, "overridden": False}
-            | {"control_usd": u, "probs": None, "input": None, "spent_after_usd": 0.0}
-            for snap, c, f, u in steps
-        ]
-        (folder / "decisions.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
-        (folder / "result.json").write_text("{}")
-    experiment = {"benchmarks": {"deepscholar": {"split": "train", "systems": ["ctl"]}}}
-    (run / "manifest.json").write_text(json.dumps({"experiment": experiment}))
-    tasks_of = {t: Task("deepscholar", t, "T") for t in tasks}
-    monkeypatch.setattr(data, "run_tasks", lambda manifest, bench: tasks_of)
-    gold = {"gold a", "gold b"}
-    monkeypatch.setattr(data, "gold_found", lambda task, ids, titles: (len(titles & gold), 2))
-    return run
+    probs = [[0.2, 0.3, 0.5], [0.6, 0.4]]  # finish at 0.5 on the first; abstract on the second
+    out = regret(probs, points)
+    assert out["regret"] == pytest.approx((0.01 + 0.01) / 2)
+    assert out["expected_regret"] == pytest.approx(
+        ((0.03 - (0.006 + 0.003 + 0.01)) + (0.01 - 0.004)) / 2
+    )
+    assert (out["search_points"], out["search_regret"]) == (1, pytest.approx(0.02))  # explore
+    with pytest.raises(ValueError, match="2 probabilities for 3 options"):
+        regret([[0.5, 0.5]], points[:1])
 
 
-def test_trajectories_label_each_decision(tmp_path, monkeypatch):
-    from jevscholar.controller.data import trajectories
-
-    found = trajectories([train_run(tmp_path, monkeypatch)])
-    assert [t["task"] for t in found] == ["t1", "t2"]
-    t = found[0]
-    assert [p["scored"] for p in t["points"]] == [True, True, False]  # the forced finish is not
-    returns = [0.0, 0.075 - 0.1 * 0.009 / 0.27, 0.15 - 0.1 * 0.019 / 0.27]
-    assert [p["return"] for p in t["points"]] == pytest.approx(returns)
-    assert t["end"] == pytest.approx(returns[-1])  # where the episode finished
-    proxy = t["points"][0]["proxy"]  # abstract: gold A; explore: nothing
-    assert proxy == pytest.approx([0.075 - 0.1 * 0.001 / 0.27, -0.1 * 0.001 / 0.27])
-    assert len(t["rows"]) == 4 and t["points"][0]["executed"] == 0
-    with pytest.raises(ValueError, match="train"):
-        manifest = tmp_path / "train-run" / "manifest.json"
-        manifest.write_text(manifest.read_text().replace('"train"', '"dev"'))
-        trajectories([tmp_path / "train-run"])
+def test_kept_adapters_rank_by_regret_then_cross_entropy():
+    steps = [
+        {"step": 0, "dev": {"regret": 0.004, "ce": 0.9}},
+        {"step": 1, "dev": {"regret": 0.002, "ce": 1.1}},
+        {"step": 2, "dev": {"regret": 0.002, "ce": 1.0}},
+        {"step": 3, "dev": {"regret": 0.002, "ce": 1.0}},
+    ]
+    assert min(steps, key=lambda h: (*selection_key(h["dev"]), h["step"]))["step"] == 2
+    assert selection_key({"ce": 0.5}) == (0.5,)  # without labelled points: cross-entropy
 
 
 # --------------------------------------------------------------------------- GPU (.venv-train)
@@ -198,12 +168,44 @@ def test_a_few_steps_fit_a_tiny_set(tmp_path):
         train=tmp_path / "train.jsonl", dev=tmp_path / "dev.jsonl", out=tmp_path / "out",
         epochs=2, lr=1e-3, accum=1, batch_tokens=256, warmup=0.0,  # ~5 rows per step
     )  # fmt: skip
-    history = train(cfg, log=lambda *_: None)["history"]
+    result = train(cfg, log=lambda *_: None)
+    history = result["history"]
+    assert [h["step"] for h in history] == list(range(len(history)))  # every step kept
     assert history[-1]["dev"]["accuracy"] == 1.0 > history[0]["dev"]["accuracy"]
+    best = tmp_path / "out" / "steps" / str(result["best_step"]) / "adapter"
+    selected = tmp_path / "out" / "adapter" / "adapter_model.safetensors"
+    assert selected.read_bytes() == (best / "adapter_model.safetensors").read_bytes()
     from jevscholar.controller.d1 import D1
 
     served = D1.load(adapter=tmp_path / "out" / "adapter")  # the checkpoint's own API serves it
     assert served.base.system_one(data[0].state, {"q": q})["answers"]["q"]["choice"] == "green"
+
+
+@pytest.mark.gpu
+def test_sparse_evaluation_keeps_the_last_step(tmp_path):
+    """Unequal prompts repack per epoch; the last optimiser step is still kept and evaluated."""
+    pytest.importorskip("peft")
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("needs a GPU")
+    from jevscholar.controller.d1 import TrainConfig, train
+
+    q = {"type": "choice", "instructions": "Which colour is named?", "criteria": {
+        "red": "red", "blue": "blue", "green": "green"}}  # fmt: skip
+    data = [
+        Example.labelled("Item: the colour is red. " * (1 + 40 * (i % 3)), q, "green")
+        for i in range(8)
+    ]
+    write_examples(tmp_path / "train.jsonl", data)
+    write_examples(tmp_path / "dev.jsonl", data[:2])
+    cfg = TrainConfig(
+        train=tmp_path / "train.jsonl", dev=tmp_path / "dev.jsonl", out=tmp_path / "out",
+        epochs=2, lr=1e-3, accum=2, batch_tokens=700, warmup=0.0, eval_every=100,
+    )  # fmt: skip
+    result = train(cfg, log=lambda *_: None)
+    steps = [h["step"] for h in result["history"]]
+    assert steps[0] == 0 and steps[-1] > 0 and len(steps) == 2  # step 0 and the last step
+    assert (tmp_path / "out" / "steps" / str(steps[-1]) / "adapter").is_dir()
 
 
 @pytest.mark.gpu
@@ -264,3 +266,80 @@ def test_server_serves_a_loop_state_as_system_one_reads_it(d1):
     finally:
         server.shutdown()
     d1.model.train()  # system_one switched the model to eval
+
+
+def test_grpo_terms_clip_and_anchor():
+    torch = pytest.importorskip("torch")
+    from jevscholar.controller.d1 import grpo_terms
+
+    logits = torch.zeros(2, requires_grad=True)
+    lp = logits.log_softmax(-1)  # 0.5, 0.5
+    surrogate, kl, clipped = grpo_terms(lp, [0.5, 0.5], [0.5, 0.5], 0, 1.0, 0.2)
+    assert surrogate.item() == pytest.approx(-1.0) and kl.item() == pytest.approx(0.0)
+    assert not clipped
+    surrogate.backward()
+    assert logits.grad[0] < 0 < logits.grad[1]  # descending the loss raises the sampled option
+
+    logits = torch.zeros(2, requires_grad=True)
+    surrogate, _, clipped = grpo_terms(logits.log_softmax(-1), [0.2, 0.8], [0.5, 0.5], 0, 1.0, 0.2)
+    assert clipped and surrogate.item() == pytest.approx(-1.2)  # ratio 2.5, clipped at 1.2
+    surrogate.backward()
+    assert logits.grad.abs().max() == 0  # no push beyond the clip
+    _, kl, _ = grpo_terms(torch.tensor([0.9, 0.1]).log(), [0.5, 0.5], [0.5, 0.5], 0, 1.0, 0.2)
+    assert kl.item() == pytest.approx(0.9 * math.log(1.8) + 0.1 * math.log(0.2))
+
+
+@pytest.mark.gpu
+def test_an_rl_step_follows_the_advantage_and_stops_on_kl(tmp_path):
+    pytest.importorskip("peft")
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("needs a GPU")
+    from jevscholar.controller.d1 import D1, Lora, RLConfig, rl_update
+    from jevscholar.controller.rl import Step, write_steps
+    from jevscholar.controller.serve import adapter_sha
+
+    sft = D1.load(lora=Lora().model_dump())
+    sft.model.save_pretrained(str(tmp_path / "sft"))
+    q = {"type": "choice", "instructions": "Which colour is named?", "criteria": {
+        "red": "red", "blue": "blue", "green": "green"}}  # fmt: skip
+    state = "Item: the colour is red."
+    (old,) = sft.rows([Example.labelled(state, q, "green")])
+    del sft
+    torch.cuda.empty_cache()
+    sha = adapter_sha(tmp_path / "sft")
+    steps = [Step(state, q, {}, 2, old, a, sha, g, t) for g, t, a in (
+        ("g1", "rollout", 1.0), ("g1", "rollout_s1", -1.0),
+        ("g2", "rollout", 1.0), ("g2", "rollout_s1", -1.0))]  # fmt: skip
+    steps[1] = Step(state, q, {}, 0, old, -1.0, sha, "g1", "rollout_s1")
+    steps[3] = Step(state, q, {}, 0, old, -1.0, sha, "g2", "rollout_s1")
+    write_steps(tmp_path / "steps.jsonl", steps)
+    base = {"kind": "rl", "source": "src", "system": "ctl_d1", "points": [], "prefix": "rl1",
+            "steps": tmp_path / "steps.jsonl", "init_adapter": tmp_path / "sft",
+            "reference": tmp_path / "sft", "lr": 1e-3, "optimizer_steps": 1}  # fmt: skip
+    loose = RLConfig(**base | {"max_kl": 10.0}, out=tmp_path / "rl")
+    result = rl_update(loose, log=lambda *_: None)
+    assert result["kept_step"] == 1 and result["history"][0]["kl"] == pytest.approx(0, abs=1e-6)
+    trained = D1.load(adapter=tmp_path / "rl" / "adapter")
+    (after,) = trained.rows([Example.labelled(state, q, "green")])
+    assert after[2] > old[2] and after[0] < old[0]  # toward the positive advantage
+    del trained
+    torch.cuda.empty_cache()
+    tight = RLConfig(**base | {"max_kl": 1e-9}, out=tmp_path / "tight")
+    assert rl_update(tight, log=lambda *_: None)["kept_step"] == 0  # stopped: the init adapter
+
+
+def test_d1_samples_seeded_per_task_and_decision():
+    from types import SimpleNamespace
+
+    from jevscholar.controller.policy import make_policy
+    from jevscholar.controller.state import State
+
+    dist = [0.1, 0.5, 0.4]
+    ctx = SimpleNamespace(tag=lambda stage: f"task#{stage}", task=SimpleNamespace(seed=0))
+    policy = make_policy({"kind": "d1", "sample": True})
+    draws = [policy._sample(ctx, State("T", 0.27, decisions=i), dist) for i in range(200)]
+    expected = [random.Random(f"task#control#0#{i}").choices(range(3), weights=dist)[0]
+                for i in range(200)]  # fmt: skip
+    assert draws == expected
+    assert policy.model_dump(mode="json")["sample"] is True  # the rollout members' identity

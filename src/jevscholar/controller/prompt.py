@@ -3,10 +3,11 @@
 `render` turns a state and its legal candidates into d1's `choice` schema: a view of the state
 (the task, the remaining budget and batches, each search's yield, the latest relevant titles) and
 one question whose options are the candidates, each described with its cost and the titles of
-the new papers it would screen. A `Profile` fixes how many relevant titles are listed, how the
-checkpoint lays the state out (`style`) and the stopping threshold; its defaults are d1's. Long
-states are shown at shorter `LEVELS` until they fit d1's validated length; the budget and the
-batch count are never cut.
+the new papers it would screen. On a research-report task (DRB2) the instructions and the
+abstract search's name speak of the report and its research request. A `Profile` fixes how many
+relevant titles are listed, how the checkpoint lays the state out (`style`) and the stopping
+threshold; its defaults are d1's. Long states are shown at shorter `LEVELS` until they fit d1's
+validated length; the budget and the batch count are never cut.
 """
 
 from __future__ import annotations
@@ -19,9 +20,15 @@ from jevscholar.controller.state import FINISH, SEARCHES, Candidate, State
 
 INSTRUCTIONS = (
     "Choose the next step of the literature search for the related-work section of the paper in "
-    "the task. Keep searching while searches still find new relevant papers and the paper's main "
-    "lines of prior work are not yet covered; finish once they are covered, or once the last "
-    "searches found few new relevant papers."
+    "the task. Prefer the search whose new papers look most relevant to the paper and least like "
+    "the relevant papers already found. Finish only when the paper's main lines of prior work are "
+    "covered and no search is likely to add relevant papers."
+)
+REPORT_INSTRUCTIONS = (
+    "Choose the next step of the search for sources for the research report the task asks for. "
+    "Prefer the search whose new results look most relevant to the request and least like the "
+    "relevant ones already found. Finish only when the request's main topics are covered and no "
+    "search is likely to add relevant sources."
 )
 PREVIEW = 5  # new titles shown per search
 LEVELS = ((None, None), (10, 3), (5, 2), (0, 1))  # (titles, preview) caps for long states
@@ -54,14 +61,16 @@ def render(
     criteria = {f"{i + 1}. {c.kind}": describe(state, c, preview) for i, c in enumerate(candidates)}
     return view, {
         "type": "choice",
-        "instructions": INSTRUCTIONS,
+        "instructions": REPORT_INSTRUCTIONS if state.report else INSTRUCTIONS,
         "criteria": criteria,
     }
 
 
 def label(state: State, query: str) -> str:
     """A query as d1 reads it: the abstract search by name, a keyword query quoted."""
-    return "the paper's abstract" if query == state.abstract else f'"{query}"'
+    if query != state.abstract:
+        return f'"{query}"'
+    return "the research request" if state.report else "the paper's abstract"
 
 
 def describe(state: State, c: Candidate, preview: int) -> str:

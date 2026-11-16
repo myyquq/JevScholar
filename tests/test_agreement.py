@@ -128,3 +128,18 @@ def test_agreement_checks_the_source_runs_own_tasks(tmp_path, monkeypatch):
     (tmp_path / "manifest.json").write_text(json.dumps({"experiment": experiment}))
     cell = agreement._experiment(tmp_path, ("b",), {"five": 1}, 0).benchmarks["five"]
     assert (cell.ids, cell.systems) == (("t3",), ("b",))
+
+
+def test_agreement_metrics_need_a_benchmark_that_judges_them(tmp_path, monkeypatch):
+    monkeypatch.setitem(types.BENCHMARKS, "five", f"{__name__}:Five")
+    experiment = {
+        "name": "src",
+        "budget": {"task_usd": 1.0},
+        "benchmarks": {"five": {"split": "test", "limit": 2, "systems": ["a"]}},
+        "systems": {"a": {"use": "simple_rag"}},
+    }
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "manifest.json").write_text(json.dumps({"experiment": experiment}))
+    with pytest.raises(ValueError, match="separately"):
+        agreement.judge_subset(src, tmp_path / "x", tasks={"five": 1}, metrics=("organization",))

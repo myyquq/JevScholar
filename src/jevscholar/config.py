@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import Field
+from pydantic import Field, SerializerFunctionWrapHandler, model_serializer
 
 from jevscholar.paths import CATALOG, CONFIGS, EXPERIMENTS
 from jevscholar.types import SYSTEMS, Strict
@@ -74,6 +74,15 @@ class ModelsConfig(Strict):
     tools: dict[str, float] = Field(default_factory=dict)  # USD per call (list price)
     free_tools: tuple[str, ...] = ()  # tools whose calls are really free: billed $0
     judgesets: dict[str, dict[str, str]] = Field(default_factory=dict)  # name -> {key: alias}
+    # upstream model -> the only reply `system_fingerprint` accepted, fresh or replayed: a reply of
+    # another model version trips the circuit breaker (every result comes from one version)
+    versions: dict[str, str] = Field(default_factory=dict)
+
+    def pin(self, alias: Alias) -> dict[str, str]:
+        """The pinned version of an alias's model as identity ({} when it is not pinned): a cell
+        or an eval file made under one version never matches one made under another."""
+        version = self.versions.get(alias.model)
+        return {} if version is None else {"version": version}
 
 
 def load_models(path: Path = CONFIGS / "models.yaml") -> ModelsConfig:
@@ -87,6 +96,16 @@ class Search(Strict):
     # "local": BM25 over a frozen arXiv metadata snapshot (the live API rate-limits this host
     # after ~10 requests); "api": export.arxiv.org. Shared by every system of a run.
     arxiv: Literal["local", "api"] = "local"
+    web_ops: int | None = None  # a task's Tavily searches and page reads (None: no limit)
+
+    @model_serializer(mode="wrap")
+    def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Without `web_ops`, the fields the settings had before it existed: every cell identity
+        made without a limit stays the same."""
+        out = handler(self)
+        if self.web_ops is None:
+            out.pop("web_ops", None)
+        return out
 
 
 class Budget(Strict):

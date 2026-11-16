@@ -12,13 +12,13 @@ are aggregated and compared, and how cost is counted and capped.
 | executor | the LLM that proposes queries, screens papers and writes: DeepSeek-V4.1-Flash, non-thinking |
 | d1 | LiquidAI/d1-3B. It only chooses: given a state and a few candidate actions, one forward pass gives each candidate's probability; it writes no text |
 | screening | the executor judging one retrieved paper's relevance to the task (DS-base's chain-of-thought `sem_filter`), one call per paper |
-| important citations, gold | the references the dataset marks as important for the target paper; used only by evaluation and training rewards, never seen by a system |
+| important citations, gold | the references the dataset marks as important for the target paper; used only by evaluation and training rewards, never seen by a system under comparison |
 | N | nugget coverage: the share of the reference section's key points (nuggets) the report covers |
 | P | cite_p, the official citation precision (per sentence, docs/03) |
 | S | claim support, the repaired sentence-level support rate (docs/03) |
 | R_c | reference recall: the share of the important citations the report cites, by exact arXiv id |
 | R_e | evidence recall: the share of the important citations among the documents the writer receives |
-| B0 | the controllers' per-task cap at list price, and U's cost scale: $0.27 on DeepScholar-Bench, $0.34 on DRB2 |
+| B0 | the controllers' per-task cap at list price, and U's cost scale: $0.27 on DeepScholar-Bench, $0.67 on DRB2 |
 | list and billed cost | list cost prices every call at the frozen price book, cache replays and nominal tool prices included, and compares systems; billed cost is what the project pays |
 
 ## Datasets and splits
@@ -27,9 +27,9 @@ are aggregated and compared, and how cost is counted and capped.
 |---|---|---|---|---|
 | DeepScholar-Bench, June 2025 | `dev` | 20 | the first 20 of the June order | comparing systems |
 | | `val` | 9 | the next 9 | selecting among a few frozen controller candidates |
-| | `train` | 34 | the remaining 34 | the controller's prompt tuning, labels and training |
+| | `train` | 34 | the remaining 34 | the controller's labels and training |
 | DeepScholar-Bench, Nov 2025 | `dev2` | 20 | the first 20 of the Nov order | a distribution-shift check |
-| | `test` | 180 | the remaining 180; the first 90 are the final test | held out |
+| | `test` | 180 | the remaining 180: the final test | held out |
 | ResearchQA | `dev` | 703 | the `valid` file (the first 40 used) | the baseline record (docs/03) |
 | | `test` | 776 | the official `test_mini` subset | not used |
 | DRB2 | `dev` | 12 | 12 fixed ids, 6 zh and 6 en | judge calibration, baselines |
@@ -42,8 +42,10 @@ proportion to the category's size), ResearchQA by general domain, DRB2 by langua
 `limit: N` in an experiment takes the first N tasks of a split. The split lists are committed in
 `data/splits/`; `jev data prepare` rebuilds them byte for byte.
 
-**The final test** is `test[:90]`, from `2511.09143v2` to `2509.19586v1`. Its newline-joined ids
-have the SHA-256 prefix `66bd8fa271d545da` (checked by `tests/test_benchmarks.py`).
+**The final test** is the whole `test` split, in two halves (docs/06). `test[:90]`, from
+`2511.09143v2` to `2509.19586v1`, runs every arm; its newline-joined ids have the SHA-256 prefix
+`66bd8fa271d545da`. `test[90:180]`, from `2511.10539v1` to `2510.00351v1`, runs DS-base and the
+main claim's d1; its prefix is `e391d433eb4366a6` (both checked by `tests/test_benchmarks.py`).
 
 **Important citations** ("gold") are the rows of a task's `important_citations.csv` with an arXiv
 link, which is what the reference metrics score:
@@ -55,6 +57,7 @@ link, which is what the reference metrics score:
 | dev | 192 | 1 | 0 | 1 |
 | dev2 | 103 | 1 | 2 | 1 |
 | test[:90] | 482 | 7 | 3 | 3 |
+| test[90:180] | 529 | 5 | 3 | 2 |
 
 Train, val and dev share a few foundational papers among their important citations (train and
 val 16 distinct ids, train and dev 9, val and dev 6), never a target paper.
@@ -79,10 +82,12 @@ for every system:
 - DRB2: the task's source article is blocked by URL, by title and by any arXiv id in its URLs.
 
 At export, every cited source is checked again (`search.policy.source_allowed`: blocked URLs and
-arXiv ids, and arXiv papers' dates) and dropped if disallowed (`export/audit.json`; no violations
-so far). Titles and web dates are enforced at retrieval only. Gold data (nuggets, important citations, the
-paper's own section, judge verdicts) never reaches a system: it is read only by evaluation and
-by training labels.
+arXiv ids, and arXiv papers' dates) and dropped if disallowed (`export/audit.json`; none in any
+run). Titles and web dates are enforced at retrieval only. Gold data (nuggets, important
+citations, the paper's own section, judge verdicts) never reaches a system under comparison: it
+is read only by evaluation, training labels and the fixed-evidence diagnostics of docs/03, which
+give the important citations to the writer on purpose. The policy cannot remove what the executor
+learned in training; docs/02 discusses that risk and the tasks' publication dates.
 
 ## How data flows through a run
 
@@ -103,10 +108,11 @@ jev report      analysis: one long table (task × metric, with cost); report.py:
 ```
 
 - **Cell identity.** A (benchmark, system) cell is identified by a hash of the executor alias's
-  settings and its upstream endpoint and dialect, the search settings, the seed, the system's
-  resolved parameters, the split, the benchmark version and the per-task cap. A result written
-  under another identity is refused on resume: such a change needs a new run id. The task limit,
-  workers and run budgets are not part of it, so a run can be extended or given more budget.
+  settings and its upstream endpoint and dialect, its pinned model version (docs/02), the search
+  settings, the seed, the system's resolved parameters, the split, the benchmark version and the
+  per-task cap. A result written under another identity is refused on resume: such a change needs
+  a new run id. The task limit, workers and run budgets are not part of it, so a run can be
+  extended or given more budget.
 - **Resume.** A task is done once its `result.json` exists. A `degraded` result (too many tool
   errors) is re-run once.
 - **Judging identity.** Each eval file records a fingerprint of what it scored: the exported
@@ -117,8 +123,8 @@ jev report      analysis: one long table (task × metric, with cost); report.py:
   and dirty flag (a dirty tree's diff is saved next to the manifest), and the hashes of
   `uv.lock`, `configs/models.yaml`, `configs/systems.yaml` and `third_party/`.
 - **Default metrics.** `jev eval` judges each benchmark's default metrics (on DeepScholar: nugget
-  coverage, cite_p, claim coverage, claim support and the two reference metrics, which need no
-  judge); others only on request (`--metrics`).
+  coverage, organization, cite_p, claim coverage, claim support and the two reference metrics,
+  which need no judge); others only on request (`--metrics`).
 
 ## Scoring and comparison
 
@@ -191,7 +197,7 @@ tool call starts:
 
 | Cap | Applies to | Where it is set |
 |---|---|---|
-| per task | a task's generation, list USD | a system's own `task_usd` (DS-base: $2), else `budget.task_usd`, else the benchmark's B0 (`Benchmark.cap_usd`: DeepScholar $0.27, DRB2 $0.34) |
+| per task | a task's generation, list USD | a system's own `task_usd` (DS-base: $2), else `budget.task_usd`, else the benchmark's B0 (`Benchmark.cap_usd`: DeepScholar $0.27, DRB2 $0.67) |
 | per run | a run's generation, billed USD | `budget.run_usd` |
 | judging per task | a task's judging, list USD | `budget.judge_usd` |
 | judging per run | a run's judging, billed USD | `budget.judge_run_usd` |
@@ -200,34 +206,34 @@ tool call starts:
 The cap is checked before each call starts, and an upstream slot is held until its call is
 metered, so a task can overshoot by at most the calls already in flight; `report.md` counts
 tasks over their cap. The controlled systems also keep a completion reserve: an action is legal
-only if writing still fits afterwards (docs/05).
+only if writing still fits afterwards (docs/05). `search.web_ops` limits a task's web operations
+(Tavily searches and page reads share one count): every call the gateway admits counts, fresh,
+cached or failed, a query the access policy blocks does not, and the call past the limit is
+refused (HTTP 429) and reaches the system as a failed tool call.
 
-**Where B0 comes from.** The DeepScholar cap was set just above what the baseline needed on June
-dev: DS-base intro-only's most expensive task there cost $0.243, × 1.1 = $0.27. The DRB2 cap is
-DS-base's natural p90 there, $0.34. The controllers are held to B0. DS-base runs at its natural
-cost under a $2 cap it never reaches: on Nov dev one of its tasks cost $0.287, which a $0.27 cap
+**Where B0 sits.** The DeepScholar cap is just above what the baseline needs on June dev:
+DS-base intro-only's most expensive task there costs $0.266. The DRB2 cap, $0.67, is above
+DS-base's natural p90 there ($0.42). The controllers are held to B0. DS-base runs at its natural
+cost under a $2 cap it never reaches: on Nov dev one of its tasks cost $0.277, which a $0.27 cap
 would have left without a report.
 
-**Where DS-base's money goes** (list USD per DeepScholar task, run `phase2-draft`):
+**Where DS-base's money goes** (list USD per DeepScholar task on June dev; DS-base from run
+`baselines-june`, d1 from run `eval-dev`, its first writer sample):
 
-| | DS-base intro-only | Controlled loop at 0.25 × B0 |
+| | DS-base intro-only | Controlled loop, d1 |
 |---|---|---|
-| relevance screening (`sem_filter`) | 146.6 calls, $0.0782 | 47.6 calls, $0.0227 |
-| ranking (`sem_topk`) | 205.3 calls, $0.0335 | none |
-| arXiv operations (searches + lookups) | 16.6 + 41.4, $0.0580 | 15.3, $0.0154 |
-| search agent / query proposals | $0.0079 | $0.0009 |
-| writer | $0.0041 | $0.0031 |
-| total | $0.182 | $0.042 |
+| relevance screening (`sem_filter`) | 167.3 calls, $0.0722 | 54.0 calls, $0.0238 |
+| ranking (`sem_topk`) | 251.3 calls, $0.0393 | 78.4 calls, $0.0114 |
+| arXiv operations (searches + lookups) | 19.3 + 36.9, $0.0562 | 8.6 + 0, $0.0086 |
+| search agent / query proposals | $0.0081 | $0.0007 |
+| d1's decisions | none | $0.0002 |
+| writer | $0.0039 | $0.0031 |
+| total | $0.180 | $0.048 |
 
-The relevance filter (screening plus ranking) is 61% of DS-base's cost; the writer is about 2%.
+The relevance filter (screening plus ranking) is 62% of DS-base's cost; the writer is about 2%.
 A controller saves money by screening fewer papers, so it must choose which searches are worth
 screening and when to stop.
 
-**Training economics** are reported apart from system cost: the API spend of labels and
-rollouts, GPU hours, d1's tokens, decisions and latency, and the break-even point T/ΔC (training
-spend T recovered by a saving of ΔC per task). d1's per-decision price above is a proxy, not a
-measured deployment cost.
-
-**Typical costs** (list USD per task, dev): Simple RAG $0.003, closed-book $0.001, DS-base
-intro-only $0.18–0.19, DS-base on DRB2 $0.32 (p50). Per-task costs of every comparison are in
-docs/05.
+**Typical costs** (list USD per task, dev): Simple RAG $0.003–0.004, closed-book $0.001,
+DS-base intro-only $0.18 on June and on Nov, DS-base on DRB2 $0.26 (p50). Per-task costs of
+every comparison are in docs/05.

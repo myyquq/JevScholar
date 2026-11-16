@@ -60,8 +60,6 @@ class Quota:
     n: int  # stratified decisions per system
     metrics: tuple[str, ...] = ()  # metrics eligible for the stratified draw (empty: all)
     keep: tuple[Any, ...] = ()  # decisions always included (DRB2 -1 'blocked')
-    census: tuple[str, ...] = ()  # metrics included in full ...
-    census_tasks: int = 0  # ... on this many tasks per system
 
 
 QUOTAS = {
@@ -99,14 +97,8 @@ def per_claim(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _draw(
     items: list[tuple[str, dict]], quota: Quota, rng: random.Random
 ) -> list[tuple[str, dict]]:
-    """Census + always-kept decisions + a round-robin draw over (metric, decision, lang) strata."""
-    tasks = sorted({k for k, it in items if it["metric"] in quota.census})
-    census = set(rng.sample(tasks, min(quota.census_tasks, len(tasks))))
-    fixed = [
-        (k, it)
-        for k, it in items
-        if (k in census and it["metric"] in quota.census) or it["decision"] in quota.keep
-    ]
+    """Always-kept decisions + a round-robin draw over (metric, decision, lang) strata."""
+    fixed = [(k, it) for k, it in items if it["decision"] in quota.keep]
     strata: dict[tuple, list] = defaultdict(list)
     for k, it in items:
         if (not quota.metrics or it["metric"] in quota.metrics) and (k, it) not in fixed:

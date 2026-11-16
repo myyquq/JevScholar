@@ -142,6 +142,25 @@ def test_each_search_reserves_for_all_it_adds_and_snapshots_restore():
         restore(point | {"version": 2}, rows, pages)
 
 
+def test_a_report_task_reads_report_wording_and_is_saved_as_one():
+    """DRB2: d1 reads report instructions and the prompt search as the research request; a
+    DeepScholar snapshot is saved as before the flag existed."""
+    from jevscholar.controller.prompt import REPORT_INSTRUCTIONS
+
+    s = State(TOPIC, 1.0, "the request", report=True, queries=[Query("the request", 1, 10, 3)])
+    cands = [Candidate("abstract", "the request", (row("2.1"),)), Candidate("explore", "e")]
+    cands.append(Candidate("finish"))
+    request = Profile().request(s, cands)
+    (question,) = request["questions"]
+    assert question["instructions"] == REPORT_INSTRUCTIONS
+    assert question["criteria"]["1. abstract"].startswith("search with the research request: ")
+    assert request["state"]["searches"] == ["the research request (pages 1, new 10, relevant 3)"]
+    point = snapshot(s, cands, 0)
+    assert point["state"]["report"] is True
+    assert restore(point, {r["url"]: r for c in cands for r in c.rows}, []).state == s
+    assert "report" not in snapshot(State(TOPIC, 1.0), cands, 0)["state"]
+
+
 def test_policy_specs_are_validated():
     assert make_policy({"kind": "fixed", "retrieval": ["deepen"]}) == Fixed(retrieval=("deepen",))
     assert make_policy({"kind": "d1", "profile": {"titles": 10}}).profile == Profile(titles=10)
@@ -201,7 +220,7 @@ class FakeD1:
         self.forwards = 0
 
     def encode(self, state: Any, question: dict, render: dict | None = None) -> tuple[list, list]:
-        titles = state["relevant papers"] if isinstance(state, dict) else []
+        titles = state.get("relevant papers", []) if isinstance(state, dict) else []
         return [0] * (100 + 5000 * len(titles)), []
 
     def probabilities(self, items: list, render: dict | None = None) -> list[list[float]]:
@@ -340,7 +359,7 @@ def gateway(tmp_path: Path) -> Iterator[Gateway]:
         tools={"d1_choice": 0.00002},
         free_tools=("d1_choice",),
     )
-    caps = {("deepscholar", "controlled"): 1.0}
+    caps = {("deepscholar", "controlled"): 1.0, ("drb2", "controlled"): 1.0}
     gw = Gateway(models, tmp_path / "run", Budget(), caps, secrets={}, cache_dir=tmp_path)
     gw.start()
     yield gw
@@ -429,6 +448,28 @@ def test_samples_and_ablations(gateway, lotus_fakes, tmp_path, monkeypatch):
     report = asyncio.run(Controlled({"policy": {"kind": "fixed", "batches": 1}}).run(ctx))
     state = State.from_json((tmp_path / "cap" / "state.json").read_text())
     assert state.budget_usd == ctx.cap_usd == 1.0 and report.meta["batches"] == 1
+
+
+def test_d1_screen_reads_each_paper_once_and_is_charged(gateway, d1_server, tmp_path):
+    from jevscholar.controller.policy import D1Screen
+
+    ctx = make_ctx(gateway, tmp_path / "s")
+    rows = [{"url": f"u{i}", "title": f"T{i}", "snippet": "A"} for i in range(10)]
+    p = D1Screen(url=d1_server.url, threshold=0.5).read(ctx, "the abstract", rows)
+    assert p == {r["url"]: pytest.approx(0.9) for r in rows} and d1_server.model.forwards == 10
+    events = [json.loads(x) for x in gateway.ledger.path.read_text().splitlines()]
+    (e,) = [e for e in events if e["name"] == "d1_choice" and e["stage"] == "screen"]
+    assert e["meta"]["papers"] == 10 and e["n"] == 1
+
+
+def test_a_d1_cell_checks_its_server_before_dispatch(d1_server):
+    Controlled({"policy": {"kind": "d1", "url": d1_server.url}}).preflight()  # the base model
+    other = Controlled({"policy": {"kind": "d1", "url": d1_server.url, "adapter": "abc"}})
+    with pytest.raises(RuntimeError, match="the system wants abc"):
+        other.preflight()
+    with pytest.raises(RuntimeError, match="no d1 server"):
+        Controlled({"policy": {"kind": "d1", "url": "http://127.0.0.1:9"}}).preflight()
+    Controlled({"policy": {"kind": "fixed"}}).preflight()  # nothing outside the gateway
 
 
 def test_d1_policy_chooses_and_is_billed(gateway, lotus_fakes, d1_server, tmp_path):
@@ -533,6 +574,30 @@ def test_a_start_without_take_keeps_its_identity():
         Controlled({"policy": {"kind": "fixed"}, "start": start | {"take": "write"}})
 
 
+def test_a_retrieval_only_episode_chooses_documents_without_writing(gateway, lotus_fakes, tmp_path):
+    from jevscholar.benchmarks import exported_report
+    from jevscholar.types import TaskResult
+
+    report, steps, ctx = run_task(
+        gateway, tmp_path / "w", {"kind": "fixed"}, 1.0, max_batches=2, write=False
+    )
+    assert executed(steps) == ["abstract", "explore", "finish"]
+    assert ("write", 10) not in lotus_fakes  # documents chosen, nothing written
+    state = State.from_json((tmp_path / "w" / "state.json").read_text())
+    assert len(state.docs) == 10 and state.draft is None
+    assert (report.text, report.meta["written"]) == ("", False)
+    assert report.meta["spent_usd"] == pytest.approx(ctx.usage()["spent_usd"])
+    result = TaskResult(ctx.task.id, "controlled", "ok", report)
+    assert exported_report(ctx.task, result) == (None, 0)  # never judged
+
+    plain = Controlled({"policy": {"kind": "fixed"}}).identity()
+    assert "write" not in plain["params"]  # writing cells keep their identity
+    assert (
+        Controlled({"policy": {"kind": "fixed"}, "write": False}).identity()["params"]["write"]
+        is False
+    )
+
+
 def test_deepen_passes_over_a_query_with_nothing_new():
     """Regression: when the most productive query's next pages held only seen papers, no query
     was deepened at all."""
@@ -540,7 +605,7 @@ def test_deepen_passes_over_a_query_with_nothing_new():
 
     class Pages(Loop):  # deepen's choice alone: pages fetched before, and new rows per page
         def __init__(self, fetched: list, fresh: dict) -> None:
-            self.hits, self.fresh = {key: [] for key in fetched}, fresh
+            self.hits, self.web_hits, self.fresh = {key: [] for key in fetched}, {}, fresh
 
         def new_rows(self, state: State, query: str, k: int) -> tuple:
             return self.fresh.get((query, k), ())
@@ -553,10 +618,88 @@ def test_deepen_passes_over_a_query_with_nothing_new():
     assert Pages([], {("b", 20): (row("x"),)}).deepen(state) is None  # 2 new fetches, then stop
 
 
+REQUEST = "Write a research report on graph agents: " + "planning, memory and tool use; " * 15
+RULE = "\n\n**important**You are not allowed to view the following article: {'title': 'X'}"
+
+
+class WebSearch(FakeSearch):
+    """FakeSearch with Tavily hits (every other one relevant) and the client's count of admitted
+    web operations; web search n's hits are https://w.example/<n>/<i>."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.web: list[tuple[str, int]] = []
+        self.stats = {**FakeSearch.stats, "web": 0}  # type: ignore[misc]
+
+    def web_search(self, query: str, k: int) -> list[dict[str, Any]]:
+        self.web.append((query, k))
+        self.stats["web"] += 1
+        n = len(self.web)
+        keep = [" keep" * (i % 2 == 0) for i in range(k)]
+        return [
+            {"title": f"W {n}.{i}", "url": f"https://w.example/{n}/{i}", "content": f"S{keep[i]}"}
+            for i in range(k)
+        ]
+
+
+def test_a_report_task_searches_the_web_first_within_its_operations(
+    gateway, lotus_fakes, tmp_path, monkeypatch
+):
+    """DRB2: the prompt search's first two batches are the request's 20 web hits (the query cut
+    to 400 characters), then arXiv; keyword queries go to the web while the task's 4 operations
+    last, then to arXiv, an earlier web query proposed again too; a query whose first page came
+    from the web is never deepened, an arXiv one is. Web pages stay out of pages.jsonl."""
+    from jevscholar.systems import controlled
+
+    proposed, replies = [], iter(["alpha", "beta", "gamma", "beta", "beta", "delta"])
+
+    async def chat(ctx: Any, stage: str, prompt: str, max_tokens: int) -> str:
+        proposed.append(prompt)
+        return next(replies)
+
+    monkeypatch.setattr(controlled, "chat", chat)
+    ctx = make_ctx(gateway, tmp_path / "r")
+    ctx.task = Task("drb2", "r", REQUEST + RULE, meta={"request": REQUEST})
+    ctx.search, ctx.search_config = WebSearch(), Search(corpora=("arxiv", "web"), web_ops=4)  # type: ignore[assignment]
+    kinds = ["explore", "abstract", "abstract", "abstract", "explore", "deepen"]
+    policy = {"kind": "fixed", "retrieval": kinds, "batches": 6}
+    asyncio.run(Controlled({"budget_usd": 1.0, "policy": policy, "costs": COSTS}).run(ctx))
+    out = tmp_path / "r"
+    steps = [json.loads(x) for x in (out / "decisions.jsonl").read_text().splitlines()]
+    taken = [s["candidates"][s["executed"]] for s in steps]
+    assert [(c["kind"], c["query"], c["k"]) for c in taken] == [
+        ("explore", "alpha", 10),
+        ("abstract", REQUEST, 150),
+        ("abstract", REQUEST, 150),
+        ("abstract", REQUEST, 150),
+        ("explore", "beta", 10),
+        ("deepen", "beta", 20),
+        ("finish", "", 0),
+    ]
+    web = [(REQUEST[:400], 20), ("alpha", 10), ("beta", 10), ("gamma", 10)]
+    assert ctx.search.web == web and ctx.search.stats["web"] == 4
+    assert taken[0]["urls"] == [f"https://w.example/2/{i}" for i in range(10)]
+    assert taken[1]["urls"] + taken[2]["urls"] == [f"https://w.example/1/{i}" for i in range(20)]
+    assert all(u.startswith("http://arxiv.org/abs/") for c in taken[3:6] for u in c["urls"])
+    assert taken[4]["urls"][0] == "http://arxiv.org/abs/beta.0"  # proposed again: from arXiv
+    deepened = {c["query"] for s in steps for c in s["candidates"] if c["kind"] == "deepen"}
+    assert deepened == {"beta"}  # never alpha, whose first page came from the web
+    arxiv = [(REQUEST, 150), ("beta", 10), ("delta", 10), ("beta", 20)]
+    assert ctx.search.calls == arxiv  # the full request on arXiv
+    pages = [json.loads(x) for x in (out / "pages.jsonl").read_text().splitlines()]
+    assert [(p["query"], p["k"]) for p in pages] == arxiv
+    assert [s["fetched"] for s in steps] == [0, 0, 0, 2, 2, 4, 4]  # arXiv once the web runs out
+    assert proposed[0].startswith("You are searching for the sources needed to write the research")
+    assert REQUEST + RULE in proposed[0] and "- the research request (10, 5)" in proposed[2]
+    state = State.from_json((out / "state.json").read_text())
+    assert state.report and state.abstract == REQUEST and steps[0]["state"]["report"]
+
+
 def test_fixed_evidence_writes_a_run_writers_documents_and_the_gold(
     gateway, lotus_fakes, tmp_path, monkeypatch
 ):
-    """The diagnostic writer: a controlled run's writer input, plus the gold papers."""
+    """The diagnostic writer: a controlled run's writer input, plus the gold papers; a writer
+    under another seed reads the source run's own task."""
     policy = {"kind": "fixed", "retrieval": ["explore"], "batches": 1}
     report, _, ctx = run_task(gateway, tmp_path / "t5", policy, 1.0)
     folder = tmp_path / "runs" / "src" / "deepscholar" / "ctl" / "tasks" / "t5"
@@ -564,13 +707,15 @@ def test_fixed_evidence_writes_a_run_writers_documents_and_the_gold(
     (folder / "state.json").write_text((tmp_path / "t5" / "state.json").read_text())
     recorded = json.loads(to_json(report))
     (folder / "result.json").write_text(json.dumps({"report": recorded}))
+    source = {"name": "src", "budget": {"task_usd": 1.0}, "benchmarks": {}}
+    (folder.parents[3] / "manifest.json").write_text(json.dumps({"experiment": source}))
     monkeypatch.setattr(paths, "RUNS", tmp_path / "runs")
     links = ["http://arxiv.org/abs/query1a.2", "http://arxiv.org/abs/gold.3"]  # one known
     gold = {"t5": [{"cited_paper_arxiv_link": u, "cited_paper_title": "g"} for u in links]}
     monkeypatch.setattr(fixed_evidence, "important_citations", lambda ds: gold)
     monkeypatch.setattr(fixed_evidence, "arxiv_id", lambda url: url.rsplit("/", 1)[-1])
 
-    ctx.task = Task("deepscholar", "t5", TOPIC, meta={"dataset": "jun2025"})
+    ctx.task = Task("deepscholar", "t5", TOPIC, seed=1, meta={"dataset": "jun2025"})
     system = FixedEvidence({"evidence": [{"run": "src", "system": "ctl"}, "gold"]})
     docs = system.documents(ctx)
     written = recorded["meta"]["docs"]
@@ -581,6 +726,7 @@ def test_fixed_evidence_writes_a_run_writers_documents_and_the_gold(
     assert lotus_fakes == [("write", len(docs))] and out.meta["docs"] == [d["url"] for d in docs]
     with pytest.raises(ValueError, match="evidence"):
         FixedEvidence({"evidence": [{"run": "src"}]})
+    assert system.identity()["params"] == {"evidence": [{"run": "src", "system": "ctl"}, "gold"]}
 
 
 # --------------------------------------------------------------------------- prompted policy

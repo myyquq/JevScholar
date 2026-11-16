@@ -262,6 +262,14 @@ def test_needs_judging_by_fingerprint_error_version_and_redo(tmp_path):
     upstream = models.upstreams[alias.upstream]
     assert routing["model"] == alias.model and "price" not in routing and "cache" not in routing
     assert (routing["url"], routing["dialect"]) == (upstream.base_url, upstream.dialect)
+    assert routing["version"] == models.versions[alias.model]  # the pinned model version
+    repinned = models.model_copy(update={"versions": {alias.model: "another"}})
+    other = judging.judge_routing(repinned, {"default": "ds-judge-chat"})
+    assert judging.fingerprint(report, other) != judging.fingerprint(
+        report, judging.judge_routing(models, {"default": "ds-judge-chat"})
+    )  # a verdict of one version never counts for another
+    unpinned = models.model_copy(update={"versions": {}})
+    assert "version" not in judging.judge_routing(unpinned, {"default": "ds-judge-chat"})["default"]
 
 
 CATALOG = """
@@ -356,7 +364,7 @@ def test_every_shipped_experiment_resolves_and_builds():
     from jevscholar.paths import EXPERIMENTS
 
     for path in sorted(EXPERIMENTS.glob("*.yaml")):
-        for variant in variants(path):
+        for variant in variants(path) or [None]:
             exp = load_experiment(path, variant)
             for system in {s for cell in exp.benchmarks.values() for s in cell.systems}:
                 use, params = exp.system_spec(system)
@@ -417,6 +425,20 @@ def test_a_controlled_cell_is_identified_by_its_resolved_policy():
     assert "url" not in identity["policy"] and identity["version"] == Controlled.version
 
 
+def test_the_drb2_check_is_frozen_and_a_web_limit_leaves_other_cells_alone():
+    """Settings without `web_ops` dump as before it existed (so every earlier cell keeps its
+    hash); the DRB2 check runs the first six tasks of the frozen test order with the limit."""
+    from jevscholar.benchmarks import split_ids
+    from jevscholar.config import Search, experiment_path
+
+    assert Search().model_dump() == {"corpora": ("arxiv",), "k": 10, "arxiv": "local"}
+    assert Search(web_ops=4).model_dump()["web_ops"] == 4
+    exp = load_experiment(experiment_path("drb2"))
+    cell = exp.benchmarks["drb2"]
+    assert (cell.split, list(cell.ids)) == ("test", split_ids("drb2", "test", 6))
+    assert exp.search.corpora == ("arxiv", "web") and exp.search.web_ops == 4
+
+
 def test_reused_verdicts_carry_the_judge_decisions(tmp_path):
     """DRB2 keeps its rubric decisions in a raw log next to the eval file: a reused verdict
     carries them, so review packs and agreement checks still see them."""
@@ -432,3 +454,74 @@ def test_reused_verdicts_carry_the_judge_decisions(tmp_path):
     copied = json.loads(out.read_text())
     assert copied["fingerprint"] == "f" and len(copied["items"]) == 2
     assert DRB2().items(copied, out.parent, Task("drb2", "5", "p")) == copied["items"]
+
+
+def test_infrastructure_failures_rerun_at_most_twice(tmp_path):
+    from jevscholar.artifacts import task_dir
+    from jevscholar.runner import RERUNS, pending
+    from jevscholar.types import Task
+
+    tasks = [Task("deepscholar", k, "T") for k in ("infra", "content", "ok")]
+    errors = {"infra": "RuntimeError: no d1 server at http://x", "content": "no relevant papers"}
+    for task in tasks:
+        folder = task_dir(tmp_path, "deepscholar", "s", task)
+        folder.mkdir(parents=True)
+        status = "ok" if task.id == "ok" else "failed"
+        result = {"status": status, "error": errors.get(task.id), "cell_hash": "c"}
+        (folder / "result.json").write_text(json.dumps(result))
+    assert pending(tmp_path, "deepscholar", "s", tasks, "c") == []  # failures stand by default
+    assert [t.id for t in pending(tmp_path, "deepscholar", "s", tasks, "c", True)] == ["infra"]
+    folder = task_dir(tmp_path, "deepscholar", "s", tasks[0])
+    for n in range(1, RERUNS + 1):
+        (folder / f"result.failed-{n}.json").write_text("{}")
+    assert pending(tmp_path, "deepscholar", "s", tasks, "c", True) == []  # reruns used up
+
+
+def synthetic_long(shifts: dict[str, dict[str, float]], n: int = 40):
+    """A merged long table: per system, every claim metric (and U) at base + shift + noise, and
+    a cost; one row per (system, task, metric)."""
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    metrics = ["nugget_coverage", "cite_p", "cite_p_per_citation", "claim_support",
+               "claim_coverage", "reference_coverage", "reference_recall", "utility",
+               "retrieval_return"]  # fmt: skip
+    noise = {m: rng.normal(0, 0.01, n) for m in metrics}
+    rows = []
+    for system, shift in shifts.items():
+        cost = 0.2 + shift.get("cost_usd", 0.0) + rng.normal(0, 0.001, n)
+        for metric in metrics:
+            values = 0.5 + shift.get(metric, 0.0) + noise[metric]
+            for i in range(n):
+                rows.append({
+                    "bench": "deepscholar", "system": system, "task": f"t{i}", "status": "ok",
+                    "eval_error": False, "has_report": True, "metric": metric,
+                    "value": values[i], "judged": True, "defined": True, "valid": True,
+                    "cost_usd": cost[i], "billed_usd": 0.0, "cold_usd": cost[i], "words": 100,
+                })  # fmt: skip
+    return pd.DataFrame(rows)
+
+
+def test_the_registered_claims_on_synthetic_results():
+    from jevscholar.analysis import main_claim, rl_claim
+
+    base = "deepscholar_base_intro"
+    long = synthetic_long({base: {}, "ctl_d1": {"cost_usd": -0.15, "nugget_coverage": 0.01}})
+    out = main_claim(long, "ctl_d1")
+    assert out["holds"] and out["checks"]["cost_usd"]["ci_hi"] < 0
+    worse = synthetic_long({base: {}, "ctl_d1": {"cost_usd": -0.15, "nugget_coverage": -0.05}})
+    out = main_claim(worse, "ctl_d1")
+    assert not out["holds"] and not out["checks"]["nugget_coverage"]["holds"]
+    gap = long.copy()
+    hit = (gap.system == "ctl_d1") & (gap.task == "t0") & (gap.metric == "claim_support")
+    gap.loc[hit, ["judged", "valid"]] = False  # a judge error leaves one pair unjudged
+    out = main_claim(gap, "ctl_d1")
+    assert not out["complete"] and not out["holds"]
+
+    arms = {base: {}, "ctl_fixed": {"cost_usd": -0.1}, "ctl_d1_sft": {"cost_usd": -0.1}}
+    rl = synthetic_long(arms | {"ctl_d1_rl": {"cost_usd": -0.15, "utility": 0.05}})
+    out = rl_claim(rl)
+    assert out["holds"] and all(a["u_beats"] for a in out["against"].values())
+    flat = synthetic_long(arms | {"ctl_d1_rl": {"cost_usd": -0.1}})
+    assert not rl_claim(flat)["holds"]  # no gain in U

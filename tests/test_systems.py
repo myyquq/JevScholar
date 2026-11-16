@@ -190,4 +190,4 @@ def test_systems_reject_unknown_parameters(path: str, params: dict[str, Any]) ->
     cls = load_class(f"jevscholar.systems.{path}")
     cls(params)
     with pytest.raises(ValidationError):
-        cls({**params, "draft": True})
+        cls({**params, "drafts": True})

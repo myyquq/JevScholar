@@ -26,6 +26,12 @@ P10 repair_citations (opt-in, so earlier cells keep their meaning). The intro wr
     numeric citations from the background.
 Ablation `search_background=False`: the intro writer gets an empty background instead of the
 search agent's draft (the controlled loop's writer gets none either).
+With `screen`, d1 replaces the filter step (sem_filter and sem_topk): the pool's papers d1 keeps
+(controller/policy.py: D1Screen), in the order of its P(relevant) (ties in pool order), up to
+`final_max_results_count`. With `draft_docs` too, the pool papers the search agent's draft names
+(by versionless arXiv id, in the draft's order) come first, then d1's, up to that count or as
+many as the draft names. `cite_rule` replaces the intro writer's "Cite as many sources as possible."
+(once in its citation guidelines, once in its quality checks) for that writer call only.
 Configuration fixes: a fresh Configs per task with all four stage LMs explicit (upstream drops
 max_tokens to 512 when deriving them), no SDK retries and the shared client timeout on every LM
 client, and the experiment's shared search settings (web corpus on/off, k per query). A system's
@@ -40,7 +46,7 @@ import functools
 import importlib
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,10 +56,12 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 import pandas as pd
 import yaml
-from pydantic import Field
+from pydantic import Field, SerializerFunctionWrapHandler, model_serializer
 
+from jevscholar.controller.policy import D1Screen
 from jevscholar.paths import VENDOR
 from jevscholar.render import ARXIV_URL, CITE, finalize, source_id
+from jevscholar.search.policy import arxiv_id
 from jevscholar.types import CLIENT_TIMEOUT_S, Report, Source, Strict, System, TaskContext
 from jevscholar.util import vendored
 
@@ -69,6 +77,8 @@ ARXIV_COLS = ["id", "title", "link", "abstract", "published", "authors", "catego
 TAVILY_COLS = ["title", "url", "content"]
 READ_QUERIES = {"arxiv_read", "tavily_read"}  # `query` value of rows made by read tools
 STALE_CITE = re.compile(rf"\s*(?:{CITE.pattern}|【\d+】)")  # P10: "[3]", "[1, 2]", "【3】"
+CITE_ALL = "- Cite as many sources as possible."  # the intro writer's line `cite_rule` replaces
+DRAFT_ID = re.compile(r"\d{4}\.\d{4,5}")  # an arXiv id the draft names, e.g. "arXiv:2107.04248"
 DEGRADED_MIN_CALLS, DEGRADED_ERROR_RATE = 5, 0.2
 
 
@@ -76,9 +86,12 @@ DEGRADED_MIN_CALLS, DEGRADED_ERROR_RATE = 5, 0.2
 @dataclass
 class Current:
     search: SearchClient
-    repair_merge: bool
+    repair_merge: bool = True
     repair_citations: bool = False
     search_background: bool = True
+    screen: Callable[[pd.DataFrame, int], pd.DataFrame] | None = None  # replaces the filter step
+    background: str = ""  # the search agent's draft, once its search has run
+    cite_rule: str | None = None  # replaces CITE_ALL in the intro writer's prompt
 
 
 CURRENT: Current | None = None
@@ -91,17 +104,11 @@ def current() -> Current:
 
 
 @contextmanager
-def task_scope(
-    search: SearchClient,
-    seed: int,
-    *,
-    repair_merge: bool = True,
-    repair_citations: bool = False,
-    search_background: bool = True,
-) -> Iterator[Current]:
-    """The patches' view of one task: its search client and the repairs it runs with."""
+def task_scope(search: SearchClient, seed: int, **settings: Any) -> Iterator[Current]:
+    """The patches' view of one task: its search client and the repairs it runs with
+    (`Current`'s fields)."""
     global CURRENT
-    CURRENT = Current(search, repair_merge, repair_citations, search_background)
+    CURRENT = Current(search, **settings)
     np.random.seed(seed)  # P9
     try:
         yield CURRENT
@@ -203,16 +210,28 @@ def install() -> ModuleType:
         return await read0(ctx, tool_type, keys)
 
     ag._read_content = read_content
-    guidelines = sg.citation_guidelines
 
     def sanitize_summary(s: str) -> str:
-        if s is guidelines and CURRENT is not None and CURRENT.repair_citations:  # P10
+        if s is sg.citation_guidelines and current().repair_citations:  # P10
             return s.strip()  # keeps the {_citation_number} column placeholder live
         return sanitize(s)
 
     sg.input_sanitization, tx.input_sanitization = sanitize_summary, sanitize
-    filter0, summary0 = top.filter, tx.generate_category_summary_with_citations
-    top.filter = lambda configs, docs_df, topic: filter0(configs, docs_df, esc(topic))
+    search0, filter0, summary0 = top.search, top.filter, tx.generate_category_summary_with_citations
+
+    async def search_(configs: Any, topic: str, end_date: Any) -> tuple[list[str], Any, str]:
+        queries, docs_df, background = await search0(configs, topic, end_date)
+        current().background = background or ""  # for `draft_docs`; the result is unchanged
+        return queries, docs_df, background
+
+    top.search = search_
+
+    def filter_(configs: Any, docs_df: pd.DataFrame, topic: str) -> pd.DataFrame:
+        if (screen := current().screen) is None or docs_df.empty:
+            return filter0(configs, docs_df, esc(topic))
+        return screen(docs_df, configs.final_max_results_count)
+
+    top.filter = filter_
     tx.generate_category_summary_with_citations = lambda docs_df, topic, lm=None: summary0(
         docs_df, esc(topic), lm
     )
@@ -244,7 +263,16 @@ def install() -> ModuleType:
             background = ""
         elif current().repair_citations:  # P10
             background = STALE_CITE.sub("", background)
-        return await intro0(topic, docs_df, background, configs)
+        if (rule := current().cite_rule) is None:
+            return await intro0(topic, docs_df, background, configs)
+        old = sg.citation_guidelines, sg.section_writer_instructions
+        sg.citation_guidelines, sg.section_writer_instructions = (
+            s.replace(CITE_ALL, rule) for s in old
+        )
+        try:
+            return await intro0(topic, docs_df, background, configs)
+        finally:
+            sg.citation_guidelines, sg.section_writer_instructions = old
 
     top.generate_intro_section = intro
     return top
@@ -373,10 +401,59 @@ class DeepScholarBase(System):
         config: dict[str, Any] = Field(default_factory=dict)  # vendored YAML overrides
         deliverable: Literal["intro", "final_report"] = "intro"
         sample: int = 0  # > 0: an independent writer sample (build_configs)
+        screen: D1Screen | None = None  # d1 instead of the filter step
+        draft_docs: bool = False  # with screen: the pool papers the search draft names first
+        cite_rule: str | None = None  # replaces CITE_ALL in the intro writer's prompt
+
+        @model_serializer(mode="wrap")
+        def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+            """Without `screen`, `draft_docs` or `cite_rule`, the fields the parameters had before
+            they existed: the cell identity of every run made before stays the same."""
+            out = handler(self)
+            if self.screen is None:
+                out.pop("screen", None)
+            if not self.draft_docs:
+                out.pop("draft_docs", None)
+            if self.cite_rule is None:
+                out.pop("cite_rule", None)
+            return out
 
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__(params)
         vendored_yaml(self.p.config)  # fail at construction, not on the first task
+        if self.p.draft_docs and self.p.screen is None:
+            raise ValueError("draft_docs needs screen (d1 fills the writer's documents)")
+        if set(self.p.cite_rule or "") & set("{}"):
+            raise ValueError("cite_rule cannot hold braces (the writer's prompt is formatted)")
+
+    def preflight(self) -> None:
+        if self.p.screen is not None:
+            self.p.screen.preflight()
+
+    def screen(self, ctx: TaskContext) -> Callable[[pd.DataFrame, int], pd.DataFrame] | None:
+        """The filter step with d1: the papers it keeps, by its P, at most `k`; with `draft_docs`,
+        after the pool papers the search draft names (all of them, if more than `k`)."""
+        d1 = self.p.screen
+        if d1 is None:
+            return None
+
+        def screen(docs: pd.DataFrame, k: int) -> pd.DataFrame:
+            if self.p.draft_docs:  # rows are picked by label: recursive search repeats labels
+                docs = docs.reset_index(drop=True)
+            p = d1.read(ctx, ctx.task.meta["abstract"], docs.to_dict("records"))
+            scored = docs.assign(_p=docs.url.map(p))
+            kept = scored[scored._p >= d1.threshold]
+            kept = kept.sort_values("_p", ascending=False, kind="stable")
+            if self.p.draft_docs:
+                ids = scored.url.map(arxiv_id)
+                first = {i: n for n, i in ids[~ids.duplicated()].items()}  # id -> its first row
+                drafted = dict.fromkeys(DRAFT_ID.findall(current().background))
+                named = [first[i] for i in drafted if i in first]
+                kept = pd.concat([scored.loc[named], kept[~ids[kept.index].isin(ids[named])]])
+                k = max(k, len(named))
+            return kept.head(k).drop(columns="_p")
+
+        return screen
 
     async def run(self, ctx: TaskContext) -> Report:
         top, task, p = install(), ctx.task, self.p
@@ -388,6 +465,8 @@ class DeepScholarBase(System):
             repair_merge=p.repair_merge,
             repair_citations=p.repair_citations,
             search_background=p.search_background,
+            screen=self.screen(ctx),
+            cite_rule=p.cite_rule,
         ):
             final_report, docs, stats = await top.deepscholar_base(
                 topic=task.prompt,

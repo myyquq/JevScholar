@@ -17,12 +17,13 @@ It separates writing from retrieval (docs/03_baselines_and_metrics.md: the bench
 from __future__ import annotations
 
 import importlib
+from dataclasses import replace
 from typing import Any, Literal
 
 import pandas as pd
 
 from jevscholar import paths
-from jevscholar.artifacts import task_dir
+from jevscholar.artifacts import experiment, task_dir
 from jevscholar.benchmarks.deepscholar import important_citations
 from jevscholar.render import finalize
 from jevscholar.search.policy import arxiv_id
@@ -61,8 +62,10 @@ class FixedEvidence(System):
 
 
 def recorded(task: Task, run: str, system: str) -> list[dict[str, Any]]:
-    """The documents `system`'s writer got for the task in `run`, in order."""
-    folder = task_dir(paths.RUNS / run, task.bench, system, task)
+    """The documents `system`'s writer got for the task in `run` (under that run's seed), in
+    order."""
+    source = paths.RUNS / run
+    folder = task_dir(source, task.bench, system, replace(task, seed=experiment(source).seed))
     if (native := folder / "native" / "paper.csv").exists():  # DS-base: its writer's input
         return pd.read_csv(native, dtype=str, keep_default_na=False).to_dict("records")
     report = read_json(folder / "result.json")["report"]

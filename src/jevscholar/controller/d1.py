@@ -7,11 +7,10 @@ are rendered and options mapped to tokens by its own `prompt` module, so trainin
 exactly what `system_one` reads, and an adapter trained here is served by it unchanged.
 
 Training is cross-entropy over the options against a target distribution (a one-hot label, or
-soft targets that share the mass among equally good options), with LoRA on the language model's
-projections (the vision tower is untouched). Option codes are positional (A, B, ...), so the
-option order is reshuffled per example and epoch. Rows are right-padded: the hybrid stack is
-causal, so a pad can never reach a real token, and the logits are computed at each row's answer
-slot only.
+graded soft targets), with LoRA on the language model's projections (the vision tower is
+untouched). Option codes are positional (A, B, ...), so the option order is reshuffled per example
+and epoch. Rows are right-padded: the hybrid stack is causal, so a pad can never reach a real
+token, and the logits are computed at each row's answer slot only.
 
 Loading d1 turns the flash SDPA kernel off for the process (d1 runs in its own): with GQA and more
 than one row it drifts in bf16 (a 3-option check: 0.6045 batched against 0.6195 in fp32), while
@@ -35,12 +34,13 @@ import importlib.util
 import json
 import math
 import random
+import shutil
 import sys
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 
@@ -159,6 +159,36 @@ def batches(lengths: Sequence[int], budget: int) -> list[list[int]]:
     return out
 
 
+def regret(
+    probs: Sequence[Sequence[float]], points: Sequence[dict[str, Any]], profile: Any = None
+) -> dict:
+    """d1's regret on labelled decision points ({"kinds", "returns"} each, options in `probs`'
+    order), each the best return less the chosen option's, averaged: deployed (the option
+    `profile.pick` takes, d1's default profile), expected (under the distribution), and among
+    the searches alone (the most probable search, at points offering two or more)."""
+    from jevscholar.controller.prompt import Profile
+    from jevscholar.controller.state import FINISH, Candidate
+
+    profile = profile or Profile()
+    deployed, expected, search = [], [], []
+    for p, point in zip(probs, points, strict=True):
+        kinds, r = point["kinds"], point["returns"]
+        if len(p) != len(kinds):
+            raise ValueError(f"{len(p)} probabilities for {len(kinds)} options")
+        best = max(r)
+        deployed.append(best - r[profile.pick([Candidate(k) for k in kinds], p)])
+        expected.append(best - sum(q * v for q, v in zip(p, r, strict=True)))
+        if len(searches := [i for i, k in enumerate(kinds) if k != FINISH]) > 1:
+            search.append(max(r[i] for i in searches) - r[max(searches, key=p.__getitem__)])
+    return {
+        "points": len(points),
+        "regret": sum(deployed) / len(deployed),
+        "expected_regret": sum(expected) / len(expected),
+        "search_points": len(search),
+        "search_regret": sum(search) / len(search) if search else None,
+    }
+
+
 def calibration(probs: Sequence[Sequence[float]], labels: Sequence[int], bins: int = 10) -> dict:
     """Accuracy, NLL, Brier score and expected calibration error (on the top probability)."""
     n, ece = len(labels), 0.0
@@ -268,23 +298,24 @@ class D1:
         self.model.train(was_training)
         return out
 
-    def evaluate(self, examples: Sequence[Example], batch_tokens: int = 32768) -> dict:
-        """Calibration metrics against each example's most probable target option, and the
-        cross-entropy against its whole target, in the stored option order."""
-        keys = [json.dumps(e.render, sort_keys=True) for e in examples]
-        probs: list[list[float]] = [[] for _ in examples]
-        for key in dict.fromkeys(keys):  # one pass per rendering
-            idx = [i for i, k in enumerate(keys) if k == key]
-            items = [(examples[i].state, examples[i].question) for i in idx]
-            for i, p in zip(
-                idx, self.probabilities(items, batch_tokens, json.loads(key)), strict=True
-            ):
-                probs[i] = p
+    def rows(self, examples: Sequence[Example]) -> list[list[float]]:
+        """Each example's option probabilities in its stored order, read one row at a time as the
+        server reads them (batched rows drift by up to about 0.03 in bf16)."""
+        return [self.probabilities([(e.state, e.question)], render=e.render)[0] for e in examples]
+
+    def evaluate(
+        self, examples: Sequence[Example], points: Sequence[dict[str, Any]] | None = None
+    ) -> dict:
+        """Calibration metrics against each example's most probable target option and the
+        cross-entropy against its whole target, read row by row in the stored option order;
+        with the examples' labelled `points`, also d1's regret there."""
+        probs = self.rows(examples)
         ce = [
             -sum(t * math.log(max(q, 1e-12)) for t, q in zip(e.targets(), p, strict=True))
             for e, p in zip(examples, probs, strict=True)
         ]
-        return calibration(probs, [e.label() for e in examples]) | {"ce": sum(ce) / len(ce)}
+        out = calibration(probs, [e.label() for e in examples]) | {"ce": sum(ce) / len(ce)}
+        return out if points is None else out | regret(probs, points)
 
 
 # --------------------------------------------------------------------------- training
@@ -297,28 +328,57 @@ class Lora(Strict):  # peft LoraConfig fields
 class TrainConfig(Strict):
     train: Path  # Example JSONL
     dev: Path
-    out: Path  # adapter/, metrics.json, config.json
-    init_adapter: Path | None = None  # continue from this adapter (e.g. RL from SFT)
+    dev_points: Path | None = None  # the dev examples' labelled points: select by regret
+    out: Path  # steps/<n>/adapter, adapter/ (the selected step), metrics.json, config.json
     revision: str = REVISION
     lora: Lora = Lora()
     lr: float = 2e-4
+    schedule: Literal["cosine", "constant"] = "cosine"  # after the warmup
     epochs: int = 2
-    warmup: float = 0.05  # share of optimiser steps
+    warmup: float = 0.05  # share of optimiser steps (at least one)
     batch_tokens: int = 8192  # padded tokens per forward
     accum: int = 4  # forwards per optimiser step
+    eval_every: int = 1  # optimiser steps between kept, evaluated adapters (and the last step)
     max_tokens: int = MAX_TOKENS  # longer prompts are dropped
     checkpointing: bool = True
     seed: int = 0
 
 
-def load_recipe(path: Path, name: str) -> TrainConfig:
-    """A named recipe of a training file (its paths relative to the repository)."""
+class RLConfig(Strict):
+    """One registered RL round (docs/06): its rollouts and its update."""
+
+    kind: Literal["rl"]
+    source: str  # the train run whose points are restored (under runs/)
+    system: str  # its controlled system
+    points: list[tuple[str, int]]  # (task key, batches before the point), frozen before rollouts
+    samples: int = 4  # members per point (a group)
+    prefix: str  # rollout runs: runs/<prefix>-b<batches>
+    run_usd: float = 0.5  # billed cap of each rollout run
+    steps: Path  # `jev controller rl-data` output: the sampled decisions with their advantages
+    out: Path  # steps/<n>/adapter, adapter/ (the kept step), metrics.json, config.json
+    init_adapter: Path  # the adapter the rollouts sampled from
+    reference: Path  # the KL anchor (d1-sft)
+    revision: str = REVISION
+    lr: float = 2e-5  # AdamW, constant, no weight decay
+    optimizer_steps: int = 4
+    groups_per_step: int = 2
+    clip: float = 0.2  # the probability ratio is clipped to [1 - clip, 1 + clip]
+    beta: float = 0.05  # weight of KL(pi || pi_reference), averaged per decision
+    max_kl: float = 0.05  # nats per decision: training stops at the first step above it
+    parity: float = 5e-3  # the update's readout of the init adapter against the logged probs
+    seed: int = 0
+
+
+def load_recipe(path: Path, name: str) -> TrainConfig | RLConfig:
+    """A named recipe of a training file (its paths relative to the repository): an RL round
+    when it says `kind: rl`, else a supervised one."""
     recipes = yaml.safe_load(path.read_text())
     if name not in recipes:
         raise ValueError(f"{path.name} has no recipe {name!r}; it has {sorted(recipes)}")
     raw = recipes[name]
-    paths = {k: ROOT / raw[k] for k in ("train", "dev", "out", "init_adapter") if raw.get(k)}
-    return TrainConfig(**raw | paths)
+    keys = ("train", "dev", "dev_points", "out", "init_adapter", "steps", "reference")
+    paths = {k: ROOT / raw[k] for k in keys if raw.get(k)}
+    return (RLConfig if raw.get("kind") == "rl" else TrainConfig)(**raw | paths)
 
 
 def shuffled(examples: Sequence[Example], rng: random.Random) -> Iterator[Example]:
@@ -330,40 +390,55 @@ def shuffled(examples: Sequence[Example], rng: random.Random) -> Iterator[Exampl
 
 
 def train(cfg: TrainConfig, log: Any = print) -> dict:
-    """LoRA-train d1 on cfg.train; keep the adapter with the best dev cross-entropy (epoch 0 =
-    the starting adapter). Each optimiser step averages its examples' cross-entropy by weight."""
+    """LoRA-train d1 on cfg.train, keeping and evaluating the adapter before training (step 0)
+    and every `eval_every` optimiser steps; out/adapter is the selected step's: the lowest dev
+    regret (with `dev_points`), then the lowest dev cross-entropy, then the earliest. Each
+    optimiser step averages its examples' cross-entropy by weight."""
     import torch
 
     torch.manual_seed(cfg.seed)
     rng = random.Random(cfg.seed)
-    d1 = D1.load(adapter=cfg.init_adapter, lora=cfg.lora.model_dump(), revision=cfg.revision)
+    d1 = D1.load(lora=cfg.lora.model_dump(), revision=cfg.revision)
     if cfg.checkpointing:
         no_reentrant = {"use_reentrant": False}  # LoRA alone trains: inputs need no grad
         d1.base.gradient_checkpointing_enable(gradient_checkpointing_kwargs=no_reentrant)
     data, dev = read_examples(cfg.train), read_examples(cfg.dev)
     if not data or not dev:
         raise ValueError("training needs train and dev examples")
+    points = None if cfg.dev_points is None else read_jsonl(cfg.dev_points)
+    if points is not None and len(points) != len(dev):
+        raise ValueError(f"{len(points)} dev points for {len(dev)} dev examples")
     params = [p for p in d1.model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=0.0)
-    total = math.ceil(len(batches_of(d1, data, cfg)) / cfg.accum) * cfg.epochs
+    epochs = [batches_of(d1, list(shuffled(data, rng)), cfg) for _ in range(cfg.epochs)]
+    total = sum(math.ceil(len(encoded) / cfg.accum) for encoded in epochs)  # optimiser steps
     warm = max(1, int(cfg.warmup * total))
-    sched = torch.optim.lr_scheduler.LambdaLR(
-        opt, lambda s: min((s + 1) / warm, 0.5 * (1 + math.cos(math.pi * min(s / total, 1.0))))
-    )
 
+    def factor(s: int) -> float:
+        ramp = (s + 1) / warm
+        if cfg.schedule == "constant":
+            return min(ramp, 1.0)
+        return min(ramp, 0.5 * (1 + math.cos(math.pi * min(s / total, 1.0))))
+
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, factor)
     cfg.out.mkdir(parents=True, exist_ok=True)
     atomic_write(cfg.out / "config.json", cfg.model_dump_json(indent=2))
-    history = [{"epoch": 0, "dev": d1.evaluate(dev, cfg.batch_tokens)}]
-    log(f"epoch 0 (starting adapter) dev {history[0]['dev']}")
-    best, best_epoch = history[0]["dev"]["ce"], 0
-    d1.model.save_pretrained(str(cfg.out / "adapter"))  # the best so far: out/adapter always exists
-    for epoch in range(1, cfg.epochs + 1):
+    history: list[dict[str, Any]] = []
+
+    def keep(step: int, epoch: int, train_ce: float | None) -> None:
+        d1.model.save_pretrained(str(cfg.out / "steps" / str(step) / "adapter"))
+        row = {"step": step, "epoch": epoch, "train_ce": train_ce}
+        history.append(row | {"dev": d1.evaluate(dev, points)})
+        log(f"step {step} (epoch {epoch}) train_ce {train_ce} dev {history[-1]['dev']}")
+
+    keep(0, 0, None)
+    step = 0
+    for epoch, encoded in enumerate(epochs, 1):
         d1.model.train()
-        seen = loss_sum = 0.0
-        encoded = batches_of(d1, list(shuffled(data, rng)), cfg)
         for start in range(0, len(encoded), cfg.accum):
             group = encoded[start : start + cfg.accum]
             total_weight = sum(row[3] for batch in group for row in batch)
+            seen = loss_sum = 0.0
             for batch in group:
                 lps = d1.option_logprobs([b[0] for b in batch], [b[1] for b in batch])
                 device = lps[0].device
@@ -380,15 +455,24 @@ def train(cfg: TrainConfig, log: Any = print) -> dict:
             opt.step()
             sched.step()
             opt.zero_grad(set_to_none=True)
-        row = {"epoch": epoch, "train_ce": loss_sum / seen}
-        history.append(row | {"dev": d1.evaluate(dev, cfg.batch_tokens)})
-        log(f"epoch {epoch} train_ce {row['train_ce']:.4f} dev {history[-1]['dev']}")
-        if history[-1]["dev"]["ce"] < best:
-            best, best_epoch = history[-1]["dev"]["ce"], epoch
-            d1.model.save_pretrained(str(cfg.out / "adapter"))
-    result = {"history": history, "best_epoch": best_epoch, "best_dev_ce": best}
+            step += 1
+            if step % cfg.eval_every == 0 or step == total:  # the last step is always kept
+                keep(step, epoch, loss_sum / seen)
+                d1.model.train()
+    assert step == total and history[-1]["step"] == total
+    best = min(history, key=lambda h: (*selection_key(h["dev"]), h["step"]))
+    selected = cfg.out / "adapter"
+    shutil.rmtree(selected, ignore_errors=True)
+    shutil.copytree(cfg.out / "steps" / str(best["step"]) / "adapter", selected)
+    result = {"history": history, "best_step": best["step"], "best_dev": best["dev"]}
     atomic_write(cfg.out / "metrics.json", json.dumps(result, indent=2))
     return result
+
+
+def selection_key(dev: dict[str, Any]) -> tuple[float, ...]:
+    """How a kept adapter ranks: its dev regret (when the dev points are labelled), then its
+    dev cross-entropy; lower is better."""
+    return (dev["regret"], dev["ce"]) if "regret" in dev else (dev["ce"],)
 
 
 def batches_of(d1: D1, examples: Sequence[Example], cfg: TrainConfig) -> list[list[tuple]]:
@@ -399,3 +483,132 @@ def batches_of(d1: D1, examples: Sequence[Example], cfg: TrainConfig) -> list[li
         if len(ids) <= cfg.max_tokens:
             rows.append((ids, forms, e.targets(), e.weight))
     return [[rows[i] for i in b] for b in batches([len(r[0]) for r in rows], cfg.batch_tokens)]
+
+
+# --------------------------------------------------------------------------- RL
+def grpo_terms(
+    lp: torch.Tensor, old: Sequence[float], ref: Sequence[float], action: int, advantage: float,
+    clip: float,
+) -> tuple[torch.Tensor, torch.Tensor, bool]:  # fmt: skip
+    """One decision's clipped surrogate -min(rA, clip(r)A), with r the sampled option's
+    probability ratio to `old`, its exact categorical KL(pi || ref), and whether the ratio was
+    clipped. `lp` holds the current log-probabilities over the options."""
+    import torch
+
+    ratio = torch.exp(lp[action] - math.log(old[action]))
+    clipped = torch.clamp(ratio, 1 - clip, 1 + clip)
+    surrogate = -torch.minimum(ratio * advantage, clipped * advantage)
+    log_ref = torch.log(torch.tensor(ref, device=lp.device).clamp_min(1e-12))
+    kl = (lp.exp() * (lp - log_ref)).sum()
+    return surrogate, kl, bool(abs(ratio.item() - clipped.item()) > 1e-12)
+
+
+def rl_update(cfg: RLConfig, log: Any = print) -> dict:
+    """One registered RL round on the sampled decisions in `cfg.steps`: the usable groups in an
+    order fixed by the seed, `groups_per_step` per optimiser step; per step, each trajectory's
+    clipped surrogates (ratios to the logged sampling probabilities) summed and averaged over
+    the step's trajectories, plus beta times the KL to the reference averaged per decision. After
+    every step an adapter is kept and the mean KL over every sampled decision (usable groups or
+    not) is measured; training stops at the first step above `max_kl`, and out/adapter is the
+    last step within it (step 0: the init adapter). Readouts are row by row, dropout off. The
+    run is built in out/staging and replaces out/steps, out/adapter and out/metrics.json only
+    once it is complete."""
+
+    from jevscholar.controller.rl import read_steps
+    from jevscholar.controller.serve import adapter_sha
+
+    steps = read_steps(cfg.steps)
+    want = adapter_sha(cfg.init_adapter)
+    if bad := {s.adapter for s in steps} - {want}:
+        raise ValueError(f"rollouts sampled from {bad}, not the init adapter {want}")
+    usable = [i for i, s in enumerate(steps) if s.usable]
+    staging = cfg.out / "staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    history: list[dict[str, Any]] = []
+    kept = 0
+    if not usable:  # no usable group: no update
+        shutil.copytree(cfg.init_adapter, staging / "steps" / "0" / "adapter")
+    else:
+        history, kept = _rl_steps(cfg, steps, usable, staging, log)
+    result = {"update": bool(usable), "kept_step": kept, "history": history}
+    for name in ("steps", "adapter"):  # promote the complete run
+        shutil.rmtree(cfg.out / name, ignore_errors=True)
+    (staging / "steps").rename(cfg.out / "steps")
+    shutil.copytree(cfg.out / "steps" / str(kept) / "adapter", cfg.out / "adapter")
+    atomic_write(cfg.out / "config.json", cfg.model_dump_json(indent=2))
+    atomic_write(cfg.out / "metrics.json", json.dumps(result, indent=2))
+    shutil.rmtree(staging)
+    return result
+
+
+def _rl_steps(
+    cfg: RLConfig, steps: Sequence[Any], usable: list[int], staging: Path, log: Any
+) -> tuple[list[dict[str, Any]], int]:
+    """The optimiser steps of `rl_update`, their adapters under staging/steps: (history, the
+    kept step)."""
+    import torch
+
+    def readout(d1: D1) -> list[list[float]]:
+        return [d1.probabilities([(s.state, s.question)], render=s.render)[0] for s in steps]
+
+    torch.manual_seed(cfg.seed)
+    reference = D1.load(adapter=cfg.reference, revision=cfg.revision)
+    ref = readout(reference)
+    del reference
+    torch.cuda.empty_cache()
+    d1 = D1.load(adapter=cfg.init_adapter, lora=Lora().model_dump(), revision=cfg.revision)
+    d1.base.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    for module in d1.model.modules():  # the ratio and the KL are read with dropout off
+        if isinstance(module, torch.nn.Dropout):
+            module.p = 0.0
+    pairs = zip(steps, readout(d1), strict=True)
+    parity = max(abs(a - b) for s, o in pairs for a, b in zip(s.old, o, strict=True))
+    if parity > cfg.parity:
+        raise ValueError(f"the init adapter reads {parity:.4f} away from the logged probabilities")
+    encoded = {i: d1.encode(steps[i].state, steps[i].question, steps[i].render) for i in usable}
+    groups = sorted({steps[i].group for i in usable})
+    random.Random(cfg.seed).shuffle(groups)
+    plan = [
+        groups[i : i + cfg.groups_per_step]
+        for i in range(0, len(groups), cfg.groups_per_step)
+    ][: cfg.optimizer_steps]  # fmt: skip
+    params = [p for p in d1.model.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=0.0)
+
+    def mean_kl() -> float:
+        now = readout(d1)
+        return sum(
+            sum(
+                p * (math.log(max(p, 1e-12)) - math.log(max(q, 1e-12)))
+                for p, q in zip(n, r, strict=True)
+            )
+            for n, r in zip(now, ref, strict=True)
+        ) / len(steps)
+
+    d1.model.save_pretrained(str(staging / "steps" / "0" / "adapter"))
+    history = [{"step": 0, "kl": mean_kl(), "parity": parity, "decisions": len(steps)}]
+    kept = 0
+    for k, chosen in enumerate(plan, 1):
+        d1.model.train()
+        idx = [i for i in usable if steps[i].group in chosen]
+        trajectories = {(steps[i].group, steps[i].trajectory) for i in idx}
+        loss_sum = clipped = 0.0
+        for i in idx:
+            s = steps[i]
+            (lp,) = d1.option_logprobs([encoded[i][0]], [encoded[i][1]])
+            surrogate, kl, was_clipped = grpo_terms(lp, s.old, ref[i], s.action, s.advantage,
+                                                    cfg.clip)  # fmt: skip
+            loss = surrogate / len(trajectories) + cfg.beta * kl / len(idx)
+            loss.backward()
+            loss_sum, clipped = loss_sum + loss.item(), clipped + was_clipped
+        torch.nn.utils.clip_grad_norm_(params, 1.0)
+        opt.step()
+        opt.zero_grad(set_to_none=True)
+        d1.model.save_pretrained(str(staging / "steps" / str(k) / "adapter"))
+        row = {"step": k, "groups": chosen, "decisions": len(idx), "loss": loss_sum}
+        history.append(row | {"clip_fraction": clipped / len(idx), "kl": mean_kl()})
+        log(f"RL step {k}: {history[-1]}")
+        if history[-1]["kl"] > cfg.max_kl:
+            break
+        kept = k
+    return history, kept

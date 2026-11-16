@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import dataclasses
-import importlib.util
 import json
 import shutil
 import subprocess
@@ -26,9 +25,6 @@ from jevscholar.judging import judges_for
 from jevscholar.paths import ROOT, VENDOR
 from jevscholar.search import arxiv_backend, openalex
 from jevscholar.types import CLIENT_TIMEOUT_S, EvalContext, Task
-
-SIBLING = Path.home() / "Projects/PyCharm/FinalProj_FrontierAI"
-SIBLING_RQA = SIBLING / "experiments/ideation_20261005/pilots/_ground_benchmarks/raw/researchqa"
 
 
 def _ctx(tmp_path: Path, judgeset: str, bench: str) -> EvalContext:
@@ -62,7 +58,7 @@ class FakeJudge:
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=reply))])
 
 
-def test_researchqa_matches_oracle_and_raises_on_infrastructure(tmp_path, monkeypatch):
+def test_researchqa_scores_and_raises_on_infrastructure(tmp_path, monkeypatch):
     waits: list[float] = []
     monkeypatch.setattr(time, "sleep", waits.append)
     calls = []
@@ -83,21 +79,13 @@ def test_researchqa_matches_oracle_and_raises_on_infrastructure(tmp_path, monkey
         flaky(1, ValueError)
     assert len(calls) == 1
 
-    src = next(
-        (d for d in (researchqa_eval.CODE, SIBLING_RQA) if (d / "compute_coverage.py").exists()),
-        None,
-    )
-    oracle_file = SIBLING / "src/frontier_research/researchqa_scoring.py"
-    if src is None or not oracle_file.exists():
-        pytest.skip("needs the upstream scorer (jev data fetch) and the sibling oracle")
+    src = researchqa_eval.CODE
+    if not (src / "compute_coverage.py").exists():
+        pytest.skip("needs the upstream scorer (jev data fetch)")
     code = tmp_path / "code"  # copies: importing must not write bytecode next to the sources
     code.mkdir()
     for name in ("compute_coverage.py", "researchqa_loader.py"):
         shutil.copy(src / name, code / name)
-    shutil.copy(oracle_file, tmp_path / "rqa_oracle.py")
-    spec = importlib.util.spec_from_file_location("rqa_oracle", tmp_path / "rqa_oracle.py")
-    oracle = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(oracle)
 
     types_ = [
         ["Other"],
@@ -174,30 +162,13 @@ def test_researchqa_matches_oracle_and_raises_on_infrastructure(tmp_path, monkey
         researchqa_eval.upstream.cache_clear()
         researchqa_eval._items.cache_clear()
 
-    valid_answers = {i: answers[i] for i in ("ok", "bad", "fail")}
-    ref = oracle.evaluate_coverage(
-        oracle.load_evaluation_items(tmp_path / "valid.json"),
-        valid_answers,
-        client=FakeJudge(replies),
-        model="ds-judge-chat",
-        sleep=lambda s: 0,
-    )
-    status = {
-        "completed": "ok",
-        "invalid_judge_labels": "invalid_label",
-        "judge_failure": "judge_failure",
+    assert {i: (o["status"]["coverage"], o["metrics"]["coverage"]) for i, o in ours.items()} == {
+        "ok": ("ok", pytest.approx(7 / 12)),
+        "bad": ("invalid_label", None),
+        "fail": ("judge_failure", None),
+        "empty": ("empty_export", None),
     }
-    for row in ref["items"]:
-        got = ours[row["id"]]
-        assert got["status"]["coverage"] == status[row["status"]]
-        if row["coverage"] is None:
-            assert got["metrics"]["coverage"] is None
-        else:
-            assert got["metrics"]["coverage"] == pytest.approx(row["coverage"])
-    cited = [j for j, t in zip(ref["rubric_judges"]["ok"], types_, strict=True) if "Citation" in t]
-    assert ours["ok"]["metrics"]["coverage_citation"] == pytest.approx(
-        oracle.compute_coverage_score(cited)
-    )
+    assert ours["ok"]["metrics"]["coverage_citation"] == pytest.approx(0.875)
     assert ours["empty"] == {"metrics": {"coverage": None}, "status": {"coverage": "empty_export"}}
     assert len(judges) == 4  # one client per judged task; none for the empty export
     first = judges[0]

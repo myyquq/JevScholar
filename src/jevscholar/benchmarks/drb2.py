@@ -3,7 +3,9 @@
 The input is the official `prompt`, which already tells the system not to use the task's source
 article; here the same rule is also enforced at the tool level for every system (the blocked
 URLs, canonicalised, the arXiv ids they contain, so mirrors and arXiv search are covered too, and
-the article's title). There is no date cutoff, as in the official protocol. Exports are
+the article's title). There is no date cutoff, as in the official protocol. A task's
+`meta["request"]` is the prompt without that closing rule (which names the article, so the access
+policy refuses the whole prompt as a query): what a system may search with. Exports are
 `idx-<n>.md`, the official evaluator's input layout.
 """
 
@@ -20,6 +22,8 @@ from jevscholar.search.policy import arxiv_id, canonical_url, norm_title
 from jevscholar.types import AccessPolicy, Benchmark, EvalContext, Task, TaskResult
 from jevscholar.util import read_json, read_jsonl
 
+RULE = "\n\n**important**"  # the start of every official prompt's closing forbidden-source rule
+
 
 @cache
 def _rows() -> dict[str, dict[str, Any]]:
@@ -30,7 +34,7 @@ def _rows() -> dict[str, dict[str, Any]]:
 class DRB2(Benchmark):
     name = "drb2"
     primary = "total"
-    cap_usd = 0.34  # B0: DS-base's natural p90 cost on the DRB2 dev tasks
+    cap_usd = 0.67  # B0: above DS-base's natural p90 cost on the DRB2 dev tasks ($0.42; docs/04)
 
     def tasks(self, split: str, limit: int | None = None) -> list[Task]:
         return [self._task(_rows()[i]) for i in split_ids(self.name, split, limit)]
@@ -51,7 +55,11 @@ class DRB2(Benchmark):
             id=str(t["idx"]),
             prompt=t["prompt"],
             policy=policy,
-            meta={"language": t["language"], "theme": t["theme"]},
+            meta={
+                "language": t["language"],
+                "theme": t["theme"],
+                "request": t["prompt"].partition(RULE)[0].rstrip(),
+            },
         )
 
     def export_task(self, task: Task, result: TaskResult | None, out: Path) -> int:

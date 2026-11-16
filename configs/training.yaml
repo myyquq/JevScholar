@@ -9,11 +9,40 @@ sanity:  # the training-loop check: a paper's primary arXiv category among four
   lr: 2.0e-4
   batch_tokens: 8192
   accum: 4
+  eval_every: 100  # 400 dev rows: evaluate every 100 optimiser steps
 sft:  # the supervised warm start on counterfactual branch labels (docs/06)
   train: data/derived/controller/sft/train.jsonl  # `jev controller labels` of train branch runs
   dev: data/derived/controller/sft/dev.jsonl  # ... of val branch runs
+  dev_points: data/derived/controller/sft/dev.points.jsonl  # their returns: select by regret
   out: runs/controller/sft
   epochs: 2
-  lr: 2.0e-4
+  lr: 5.0e-5
+  schedule: constant
+  warmup: 0.0  # one warmup step
   batch_tokens: 8192
-  accum: 4
+  accum: 1
+  seed: 0
+rl1:  # the registered RL round (docs/06): its points are frozen before any rollout
+  kind: rl
+  source: ctl-train-d1
+  system: ctl_d1
+  points:  # `jev controller rl-points ctl-train-d1`
+    - [2505.22167v1, 4]
+    - [2505.24203v1, 3]
+    - [2504.06975v1, 4]
+    - [2504.21752v1, 4]
+    - [2506.00958v1, 3]
+    - [2505.24754v1, 3]
+    - [2505.21811v1, 5]
+    - [2505.22757v1, 5]
+  samples: 4
+  prefix: rl1
+  run_usd: 0.5
+  steps: data/derived/controller/rl/rl1.jsonl  # `jev controller rl-data rl1`
+  out: runs/controller/rl1
+  init_adapter: runs/controller/sft/adapter  # d1-sft, which the rollouts sample from
+  reference: runs/controller/sft/adapter
+  lr: 2.0e-5
+  optimizer_steps: 4
+  groups_per_step: 2
+  seed: 0

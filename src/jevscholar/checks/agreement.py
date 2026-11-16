@@ -56,11 +56,13 @@ def judge_subset(
     systems: tuple[str, ...] = (),
     judgeset: str = "official",
     tasks: dict[str, int] | None = None,
+    metrics: tuple[str, ...] = (),
     workers: int | None = None,
 ) -> str | None:
     """Judge the first `tasks[bench]` tasks of `source`'s task list (its split prefix, or its
     `ids`) and its `systems` (default: every system; the first is the paired comparisons'
-    baseline) into run_dir.
+    baseline) into run_dir: each benchmark's default metrics, or only `metrics`, on the
+    benchmarks that judge them separately.
 
     A re-run never shrinks a prefix or drops a system: what is judged (and paid for) stays."""
     if run_dir.resolve() == source.resolve():
@@ -72,8 +74,13 @@ def judge_subset(
             tasks[bench] = max(tasks.get(bench, 0), checked)
             systems = (*systems, *(s for s in cell.systems if s not in systems))
     exp = _experiment(source, systems, tasks, workers)
+    only = None
+    if metrics:
+        only = [b for b in exp.benchmarks if set(metrics) <= set(benchmarks.get(b).metrics)]
+        if not only:
+            raise ValueError(f"no benchmark of {source.name} judges {list(metrics)} separately")
     models = load_models()
-    jobs = eval_jobs(run_dir, exp, models, judgeset, source=source)
+    jobs = eval_jobs(run_dir, exp, models, judgeset, source=source, only=only, metrics=metrics)
     return judge(
         run_dir, exp, jobs, judgeset, models=models, workers=workers,
         record={"source_run": source.name},

@@ -14,6 +14,8 @@ import importlib
 import os
 from types import ModuleType
 
+WEB_TOOLS = ("tavily_search", "tavily_extract")  # a task's web operations (`search.web_ops`)
+
 
 class ToolError(Exception):
     """A tool call failed; the task may continue without its results."""

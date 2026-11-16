@@ -3,6 +3,19 @@
 # independent writer samples per task (docs/04, docs/06). Serve d1 first:
 # `scripts/train_env.sh jev controller serve`.
 budget: {run_usd: 4.0, judge_run_usd: 2.0}
+systems:
+  dsb_d1_30:  # DS-base with d1 as its filter step: d1 screens the pool and its P ranks the
+    extends: deepscholar_base_intro  # relevant papers to the writer's 30; the search agent's own
+    screen: {threshold: 0.2942}  # draft is kept (its search replays DS-base's)
+  dsb_d1_dr: {extends: dsb_d1_30, draft_docs: true}  # ... the pool papers its draft names first
+  dsb_d1_dr_cr:  # DraftRef whose writer ends a sentence where its source changes: cite_p judges
+    extends: dsb_d1_dr  # every citation against its whole sentence
+    cite_rule: >-
+      - Cite every source at least once, and end a sentence where its source changes: do not join
+      points from different sources in one sentence (with 'and', 'while', a semicolon or a
+      comma-separated list), even where the existing section content does; split such sentences,
+      keeping every point with its citation. Cite several sources in one sentence only if each one
+      supports the whole sentence.
 benchmarks:
   deepscholar:
     samples: 2
@@ -11,14 +24,136 @@ benchmarks:
 variants:
   dev: {benchmarks: {deepscholar: {split: dev, limit: 20}}}     # June dev
   dev2: {benchmarks: {deepscholar: {split: dev2, limit: 20}}}   # Nov dev2
-  test:  # the held-out tasks; the trained controllers join once frozen
-    budget: {run_usd: 15.0, judge_run_usd: 5.0}
+  test:  # the final test's first 90 tasks: every arm (docs/06); serve d1, d1-sft and d1-rl first
+    budget: {run_usd: 25.0, judge_run_usd: 10.0}
     benchmarks:
       deepscholar:
         split: test
         limit: 90
-        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_d1,
-                  deepscholar_base_intro_nobg]
+        systems: [deepscholar_base_intro, ctl_d1, ctl_d1_sft, ctl_d1_rl, ctl_fixed, ctl_fixed_6,
+                  simple_rag_k20, deepscholar_base_intro_nobg]
+  test-ext:  # the other 90 test tasks: DS-base and the main claim's d1 (docs/06)
+    budget: {run_usd: 12.0, judge_run_usd: 4.0}
+    benchmarks:
+      deepscholar:
+        split: test
+        systems: [deepscholar_base_intro, ctl_d1]
+        ids:  # test[90:180], id hash prefix e391d433eb4366a6
+          - 2511.10539v1
+          - 2511.10404v1
+          - 2511.09677v1
+          - 2511.09573v1
+          - 2511.05492v1
+          - 2510.16986v1
+          - 2511.08379v2
+          - 2511.08856v1
+          - 2511.08810v1
+          - 2510.19484v1
+          - 2511.09871v1
+          - 2509.24693v1
+          - 2511.09487v1
+          - 2511.08294v1
+          - 2511.01019v2
+          - 2510.00027v2
+          - 2511.10480v1
+          - 2511.08462v2
+          - 2509.15664v1
+          - 2511.07032v1
+          - 2511.09675v1
+          - 2511.03826v2
+          - 2510.26792v1
+          - 2510.02259v1
+          - 2511.10212v1
+          - 2511.08697v1
+          - 2511.10621v1
+          - 2511.04608v2
+          - 2511.07997v1
+          - 2511.09363v1
+          - 2510.20066v1
+          - 2511.08136v1
+          - 2511.09870v1
+          - 2511.04856v1
+          - 2511.09979v1
+          - 2511.08263v1
+          - 2511.05510v1
+          - 2511.07347v1
+          - 2511.09980v1
+          - 2511.03749v1
+          - 2511.07014v1
+          - 2511.09769v1
+          - 2511.09845v1
+          - 2511.01464v1
+          - 2511.00727v1
+          - 2511.05531v1
+          - 2511.08181v1
+          - 2511.08252v1
+          - 2511.10585v1
+          - 2510.14455v1
+          - 2511.08823v1
+          - 2511.09833v1
+          - 2511.09576v1
+          - 2511.01352v1
+          - 2510.14143v1
+          - 2511.05396v1
+          - 2511.04967v2
+          - 2511.09722v1
+          - 2511.05766v1
+          - 2511.09109v2
+          - 2511.04838v1
+          - 2511.08098v1
+          - 2511.09588v1
+          - 2511.09290v1
+          - 2511.09973v1
+          - 2511.10320v1
+          - 2510.08655v1
+          - 2511.10442v1
+          - 2511.08660v1
+          - 2510.25807v1
+          - 2511.08402v1
+          - 2511.09025v1
+          - 2511.08230v1
+          - 2511.07585v1
+          - 2511.10250v1
+          - 2510.17826v1
+          - 2510.02903v1
+          - 2511.05630v1
+          - 2510.01480v1
+          - 2511.02092v1
+          - 2511.05209v1
+          - 2511.07671v1
+          - 2509.21862v2
+          - 2511.05187v1
+          - 2511.10091v1
+          - 2510.22044v1
+          - 2511.08247v1
+          - 2510.24670v2
+          - 2511.09891v1
+          - 2510.00351v1
+  dsb-dr-dev:  # DraftRef (dsb_d1_dr), June dev, four writer samples; its search replays eval-dev's
+    budget: {run_usd: 0.5, judge_run_usd: 0.5}
+    benchmarks: {deepscholar: {split: dev, limit: 20, samples: 4, systems: [dsb_d1_dr]}}
+  dsb-dr-dev2:  # ... Nov dev2
+    budget: {run_usd: 0.5, judge_run_usd: 0.5}
+    benchmarks: {deepscholar: {split: dev2, limit: 20, samples: 4, systems: [dsb_d1_dr]}}
+  dsb-drcr-dev:  # DraftRef with its writer's citation rule (dsb_d1_dr_cr), June dev, as dsb-dr-dev
+    budget: {run_usd: 0.5, judge_run_usd: 0.5}
+    benchmarks: {deepscholar: {split: dev, limit: 20, samples: 4, systems: [dsb_d1_dr_cr]}}
+  dsb-drcr-dev2:  # ... Nov dev2, as dsb-dr-dev2
+    budget: {run_usd: 0.5, judge_run_usd: 0.5}
+    benchmarks: {deepscholar: {split: dev2, limit: 20, samples: 4, systems: [dsb_d1_dr_cr]}}
+  dsb-dr-test:  # DraftRef (dsb_d1_dr), all 180 test tasks; search replays eval-test's and eval-test-ext's
+    budget: {run_usd: 2.0, judge_run_usd: 6.5}
+    benchmarks: {deepscholar: {split: test, samples: 4, systems: [dsb_d1_dr]}}
+  dsb-drcr-test:  # ... with its writer's citation rule (dsb_d1_dr_cr), as dsb-dr-test
+    budget: {run_usd: 1.0, judge_run_usd: 4.5}
+    benchmarks: {deepscholar: {split: test, samples: 4, systems: [dsb_d1_dr_cr]}}
+  dsb-d1-test:  # DS-base with d1's filter step on all 180 test tasks, four writer samples; its
+    budget: {run_usd: 2.0, judge_run_usd: 3.0}  # search replays eval-test's and eval-test-ext's
+    benchmarks: {deepscholar: {split: test, samples: 4, systems: [dsb_d1_30]}}
+  test-closed:  # the closed-book reference row on the first 90 test tasks, one sample
+    budget: {run_usd: 1.0, judge_run_usd: 1.0}
+    benchmarks:
+      deepscholar: {split: test, limit: 90, samples: 1, systems: [closed_book]}
   replay:  # $0 check: the baselines regenerate from the replay cache, byte-identical
     replay_only: true
     offpeak_only: false
