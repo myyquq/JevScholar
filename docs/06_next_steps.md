@@ -592,6 +592,35 @@ that were never built, so this is the arXiv-only fallback, labelled as such.
 - **Expected cost.** About $10 list for generation (DS-base ~$0.25-0.45 a task) and $2 for
   judging; about half billed off-peak. The campaign cap is $45, of which $32.31 is spent.
 
+**Result** (run `eval-drb2-test`, GPU job 33520971, 18 min; judge job 33520985, 30 min; $2.41
+billed, campaign $34.72 of $45). Every system but Simple RAG gives up on some tasks: when the
+relevance filter keeps no paper, DS-base's writer (which the controllers share) raises, and the
+report is empty (scored 0). Failed of 12 tasks (both samples): Simple RAG 0, screened b4 2,
+screened b3 3, DS-base 3, fixed b3 5 (tasks 2, 23, 80, 109, 111: social policy, battery market,
+history, railway IIoT, youth health).
+
+| system | $ / task | total, all 12 (fail = 0) | total, 7 tasks all wrote | info recall (7) | analysis (7) | presentation (7) |
+|---|---|---|---|---|---|---|
+| DS-base | .310 | .179 | .273 | .210 | .265 | .816 |
+| Simple RAG | .006 | .208 | .241 | .164 | .257 | .847 |
+| fixed b3 | .027 | .110 | .188 | .131 | .130 | .804 |
+| screened b3 | .013 | .122 | .163 | .114 | .107 | .733 |
+| screened b4 | .015 | .119 | .175 | .125 | .105 | .791 |
+
+Paired on the 7 tasks every system wrote: screened b4 − DS-base −.098 [−.175, −.022]; fixed −
+DS-base −.085 [−.151, −.019]; Simple RAG − DS-base −.032 [−.091, .027]; Simple RAG − screened b4
++.067 [.022, .111]; screened b3 − fixed −.025 [−.069, .020]; screened b4 − fixed −.013 [−.046,
+.019]. On all 12 (failures 0): fixed − DS-base −.069 [−.121, −.017]; Simple RAG − fixed +.098
+[.051, .146]; screened − fixed +.012 and +.010 (n.s.); cost: screened b3 − fixed −$.014, b4 −$.011.
+
+**What this shows.** The screener's cost saving transfers (about half of the fixed rule's cost)
+with no significant loss against the fixed rule. The controllers themselves do not transfer: on
+DRB2 they score below DS-base and below Simple RAG, mainly on analysis (about .10-.13 against
+.26), because their 3-4 arXiv batches are filtered to few documents for a long report, and they
+give up where the filter keeps nothing. Simple RAG never gives up and is the best on the full
+12 at 2% of DS-base's cost. Arxiv-only, 12 tasks: a diagnostic, not a competitive DRB2 result;
+the planned web search is what this check lacked.
+
 ## Schedule
 
 | Week | Work |
