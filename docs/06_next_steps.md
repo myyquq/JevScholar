@@ -124,6 +124,26 @@ whose options' returns differ, its regret is .0068 (d1-sft .0074). This is the c
 docs/05 names, at about 1.5 times d1-sft's cost (about 30% of DS-base's). With 9 tasks it is not
 resolved: the choice between d1-sft and d1-rl is made on June dev (below).
 
+**June dev result** (run `eval-dev-trained`, 20 tasks, two writer samples averaged; from
+runs/eval-dev-trained/frontier.md). The fixed rule at 5 and 6 batches is the matched-cost
+reference for d1-sft and d1-rl.
+
+| system | $ | nugget | ref recall | cite_p | claim support | U |
+|---|---|---|---|---|---|---|
+| fixed b3 | .021 | .204 | .220 | .615 | .890 | .378 |
+| fixed b4 | .028 | .215 | .218 | .580 | .886 | .382 |
+| fixed b5 | .041 | .231 | .247 | .558 | .884 | .396 |
+| fixed b6 | .047 | .242 | .244 | .538 | .867 | .399 |
+| d1 (untrained) | .050 | .214 | .247 | .594 | .891 | .379 |
+| d1-sft | .031 | .220 | .221 | .539 | .835 | .377 |
+| d1-rl | .043 | .214 | .245 | .525 | .861 | .372 |
+
+Against fixed b3, d1-sft and d1-rl are a little more complete (nugget +.015 and +.010, neither
+interval excludes 0) at 1.5-2 times the cost, and less reliable (cite_p −.076 and −.090, the
+latter significant, p .016). Against the cheapest fixed budget costing at least as much (d1-sft
+vs b5, d1-rl vs b6) no metric is higher; d1-sft is significantly lower on reference recall
+(−.026 [−.049, −.003]) and claim support (−.049 [−.091, −.007]). Neither goes to test.
+
 ### Writing decisions
 
 **Why.** On June dev (run `eval-dev-trained`) the fixed rule run at more batches gains about as
