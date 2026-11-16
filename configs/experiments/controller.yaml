@@ -1,7 +1,7 @@
 # The controlled loop on the June train and validation tasks (docs/05, docs/06): a smoke check of
-# every policy, untrained d1's train episodes (the states its branch labels and RL points start
-# from), selection on val, and the val gate. Serve d1 first:
-# `scripts/train_env.sh jev controller serve`.
+# every policy, the fixed rule's and untrained d1's train episodes (the states the writing and
+# reading pilots, and d1's branch labels and RL points, start from), selection on val, and the val
+# gate. Serve d1 first: `scripts/train_env.sh jev controller serve`.
 budget: {run_usd: 1.0, judge_run_usd: 0.4}
 
 systems:
@@ -20,6 +20,9 @@ variants:
         split: train
         limit: 2
         systems: [ctl_fixed_3, ctl_keyword, ctl_d1, ctl_prompted]
+  rollouts:  # the fixed rule on all 34 train tasks (rollouts-train; rollouts-val on the 9 val
+    benchmarks:  # tasks: --set benchmarks.deepscholar.split=val)
+      deepscholar: {split: train, systems: [ctl_fixed]}
   rollouts_d1:  # untrained d1 on all 34 train tasks: the states its branch labels start from
     benchmarks:
       deepscholar: {split: train, systems: [ctl_d1]}

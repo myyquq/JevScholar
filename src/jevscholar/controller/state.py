@@ -11,9 +11,16 @@ preparing that step again, and re-reads the pages the original run had fetched f
 
 An episode is a sequence of retrieval decisions, each among at most four candidates with `finish`
 last: the next batch of the abstract search, one keyword query the executor proposes, the next
-page of the most productive keyword query, or finishing. After `finish` the writer writes; that
-is not a decision. The rules here are the loop's hard rules: they keep the candidates a policy may
-choose from, and leave a policy no say where only one is left. A search is legal only within the
+page of the most productive keyword query, or finishing. After `finish` the writer writes a first
+draft. Where a cell offers revisions (`REVISIONS`), writing decisions follow, each between the
+revisions still affordable and `submit` (last): `ground` rewrites the draft so that each cited
+sentence states only what its sources support, `expand` so that it also covers the task's problem,
+the field's key ideas and sources not discussed yet. The reading revisions (`READS`, at most one
+per episode) give the writer each document's full-text excerpt besides its abstract (and keep it
+for every later revision): `read` revises the draft for coverage from them, `redraft` writes the
+section anew from them. At most MAX_REVISIONS per episode. The
+rules here are the loop's hard rules: they keep the candidates a policy may choose from, and
+leave a policy no say where only one is left. A search is legal only within the
 batch cap, if it brings a paper no other candidate brings, and if after it another step's
 overhead and the writing still fit, whatever it adds; finishing waits for a first relevant paper
 while a search is still possible. On a research-report task (`report`, DRB2) the abstract search
@@ -23,14 +30,23 @@ is the prompt search: `abstract` holds the research request.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-Kind = Literal["abstract", "explore", "deepen", "finish"]
-Phase = Literal["retrieval", "done"]
+Kind = Literal[
+    "abstract", "explore", "deepen", "finish", "ground", "expand", "read", "redraft", "submit"
+]
+Revision = Literal["ground", "expand", "read", "redraft"]
+Phase = Literal["retrieval", "writing", "done"]
 SEARCHES = ("abstract", "explore", "deepen")
 FINISH = "finish"
+REVISIONS = ("ground", "expand", "read", "redraft")
+READS = ("read", "redraft")  # the revisions that read the documents' full text
+SUBMIT = "submit"
+MAX_REVISIONS = 2  # writing decisions that revise, per episode
+CITATION = re.compile(r"\\\[\[[^\]]*\]\((?P<url>[^)\s]+)\)\\\]")  # the writer's \[[label](url)\]
 PAGE = 10  # hits per search page and papers per batch (DS-base's per-query result count)
 MAX_PAGES = 3  # a keyword query is followed to at most PAGE x MAX_PAGES hits
 ABSTRACT_K = 150  # the abstract search reads one ranked list this deep, a batch at a time
@@ -73,6 +89,8 @@ class State:
     docs: list[str] = field(default_factory=list)  # the writer's documents (URLs), once ranked
     draft: str | None = None  # the written section (DS-base markdown), once written
     report: bool = False  # a research-report task: `abstract` is its research request
+    revisions: list[str] = field(default_factory=list)  # the revisions made, in order
+    drafts: list[str] = field(default_factory=list)  # the drafts before each revision
 
     @property
     def remaining_usd(self) -> float:
@@ -130,6 +148,8 @@ class Costs:
 
     screen_usd: float = 0.0005  # per paper: one CoT sem_filter call (measured 0.00046)
     write_usd: float = 0.008  # the intro writer (measured 0.0036; DS-base mean 0.004)
+    revise_usd: float = 0.01  # one revision: the writer's call with the draft as well
+    read_usd: float = 0.03  # a reading revision: the writer's call with full-text excerpts
     rank_usd: float = 0.0008  # per relevant paper beyond WRITE_DOCS (measured 0.0007)
     step_usd: float = 0.007  # a proposal (<= 0.0013), <= 4 page fetches (0.004), a choice
 
@@ -174,6 +194,27 @@ def legal(state: State, candidates: list[Candidate], costs: Costs) -> list[Candi
     return [*searches, *(finish if state.relevant() or not searches else [])]
 
 
+def numbered(draft: str, urls: Sequence[str]) -> str:
+    """The draft with each citation as its number into `urls` ([3]), the writer's own input
+    form; a citation of another URL is dropped."""
+    index = {url: i + 1 for i, url in enumerate(urls)}
+    return CITATION.sub(lambda m: f"[{index[m['url']]}]" if m["url"] in index else "", draft)
+
+
+def write_legal(state: State, offered: tuple[str, ...], costs: Costs) -> list[Candidate]:
+    """A writing decision's candidates: each offered revision while fewer than MAX_REVISIONS were
+    made and it fits the remaining budget (a reading one only while none was made), then
+    `submit`."""
+    out = []
+    if len(state.revisions) < MAX_REVISIONS:
+        read = any(k in READS for k in state.revisions)
+        for k in REVISIONS:
+            cost = costs.read_usd if k in READS else costs.revise_usd
+            if k in offered and not (read and k in READS) and cost <= state.remaining_usd:
+                out.append(Candidate(k, cost_usd=cost))
+    return [*out, Candidate(SUBMIT)]
+
+
 Pages = dict[tuple[str, int], list[dict[str, Any]]]  # (query, k) -> its top-k search rows
 
 
@@ -188,12 +229,13 @@ class Point:
 
 def snapshot(state: State, candidates: list[Candidate], fetched: int) -> dict[str, Any]:
     """A decision point by reference: papers and candidate rows as URLs into rows.jsonl, and the
-    number of search pages fetched so far (the first `fetched` records of pages.jsonl). A state
-    that is not a report task's is saved as before `report` existed."""
+    number of search pages fetched so far (the first `fetched` records of pages.jsonl). `report`,
+    `revisions` and `drafts` are saved only when set, as before they existed."""
     papers = [[p.url, p.relevant] for p in state.papers]
     saved = asdict(state) | {"papers": papers}
-    if not state.report:
-        del saved["report"]
+    for key in ("report", "revisions", "drafts"):
+        if not saved[key]:
+            del saved[key]
     return {
         "version": SNAPSHOT,
         "state": saved,

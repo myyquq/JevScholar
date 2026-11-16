@@ -267,6 +267,32 @@ The first 90 tasks (closed-book one writer sample; columns as in docs/05):
 - **U.** d1's U is above DS-base's on the first 90 tasks (+0.029 [0.001, 0.058]), not on the other
   90 (+0.008 [−0.023, 0.039]).
 
+## Trained-controller comparison on June dev
+
+This comparison uses the d1-screen line's SFT and RL adapters: SFT on fixed-rule branch
+labels, then RL on one sampled decision with a fixed continuation. These differ from the
+adapters used for the registered test above. The runs predate model-version pinning (docs/02).
+
+**June dev result** (run `eval-dev-trained`, 20 tasks, two writer samples averaged; from
+runs/eval-dev-trained/frontier.md). The fixed rule at 5 and 6 batches is the matched-cost
+reference for d1-sft and d1-rl.
+
+| system | $ | nugget | ref recall | cite_p | claim support | U |
+|---|---|---|---|---|---|---|
+| fixed b3 | .021 | .204 | .220 | .615 | .890 | .378 |
+| fixed b4 | .028 | .215 | .218 | .580 | .886 | .382 |
+| fixed b5 | .041 | .231 | .247 | .558 | .884 | .396 |
+| fixed b6 | .047 | .242 | .244 | .538 | .867 | .399 |
+| d1 (untrained) | .050 | .214 | .247 | .594 | .891 | .379 |
+| d1-sft | .031 | .220 | .221 | .539 | .835 | .377 |
+| d1-rl | .043 | .214 | .245 | .525 | .861 | .372 |
+
+Against fixed b3, d1-sft and d1-rl are a little more complete (nugget +.015 and +.010, neither
+interval excludes 0) at 1.5-2 times the cost, and less reliable (cite_p −.076 and −.090, the
+latter significant, p .016). Against the cheapest fixed budget costing at least as much (d1-sft
+vs b5, d1-rl vs b6) no metric is higher; d1-sft is significantly lower on reference recall
+(−.026 [−.049, −.003]) and claim support (−.049 [−.091, −.007]). Neither goes to test.
+
 ## DraftRef: DS-base writing from its draft's references
 
 **The idea.** DS-base's search agent ends with a related-work draft. The draft names, by arXiv

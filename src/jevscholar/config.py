@@ -5,7 +5,7 @@ All are plain YAML validated by pydantic (unknown keys are errors). An experimen
 into one self-contained `Experiment`, which the run manifest records, in this order:
 
 1. `variants`: the file's base settings deep-merged with one named variant (`--variant`);
-   mappings merge, lists and scalars replace.
+   mappings merge, lists and scalars replace; a benchmark set to null drops the base's cell.
 2. `--set a.b.c=value` overrides (values parsed as YAML).
 3. Systems: every name a benchmark lists is defined locally (`systems:`), in the catalog, or is a
    bare system class (`simple_rag`: default parameters). A definition may `extends` another
@@ -187,6 +187,8 @@ def load_experiment(
         raise ValueError(f"{path.name} needs a variant: one of {sorted(named)}")
     raw["name"] = f"{path.stem}/{variant}" if variant else path.stem
     raw = apply_overrides(raw, list(overrides))
+    if cells := raw.get("benchmarks"):
+        raw["benchmarks"] = {name: cell for name, cell in cells.items() if cell is not None}
     known = yaml.safe_load(catalog.read_text()) or {}
     return Experiment.model_validate(resolve_systems(raw, known))
 

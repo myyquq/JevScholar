@@ -16,6 +16,24 @@ systems:
       comma-separated list), even where the existing section content does; split such sentences,
       keeping every point with its citation. Cite several sources in one sentence only if each one
       supports the whole sentence.
+  # the fixed rule at larger budgets (ctl_fixed: 3 batches): its cost-quality curve, against
+  # which the screened cells are compared at matched cost (`jev controller frontier`)
+  ctl_fixed_b4: {extends: ctl_fixed, policy: {batches: 4}}
+  ctl_fixed_b5: {extends: ctl_fixed, policy: {batches: 5}}
+  ctl_fixed_b6: {extends: ctl_fixed, policy: {batches: 6}}
+  # d1 as the relevance screener (docs/07_screener.md): runs/controller/screen/adapter, at the
+  # delta chosen on val; the money it saves buys more batches. Serve it first:
+  # `scripts/train_env.sh jev controller serve --adapter runs/controller/screen/adapter --port 9943`
+  ctl_screen:
+    extends: ctl_fixed
+    screener:
+      url: http://127.0.0.1:9943
+      adapter: 0ec04682ed2c880a34e279f24df0d121671629a0a0d7e8274425fa4fddfb502e
+      delta: 0.7
+  ctl_screen_b4: {extends: ctl_screen, policy: {batches: 4}}
+  ctl_screen_b5: {extends: ctl_screen, policy: {batches: 5}}
+  ctl_screen_b6: {extends: ctl_screen, policy: {batches: 6}}
+  ctl_screen_b8: {extends: ctl_screen, max_batches: 8, policy: {batches: 8}}
 benchmarks:
   deepscholar:
     samples: 2
@@ -23,6 +41,20 @@ benchmarks:
 
 variants:
   dev: {benchmarks: {deepscholar: {split: dev, limit: 20}}}     # June dev
+  dev-screen:  # June dev: the screened fixed rule against the fixed curve
+    benchmarks:
+      deepscholar:
+        split: dev
+        limit: 20
+        systems: [ctl_fixed, ctl_fixed_b4, ctl_fixed_b5, ctl_fixed_b6,
+                  ctl_screen, ctl_screen_b4, ctl_screen_b5, ctl_screen_b6, ctl_screen_b8]
+  dev2-screen:  # Nov dev2: the same comparison on 20 new tasks
+    benchmarks:
+      deepscholar:
+        split: dev2
+        limit: 20
+        systems: [ctl_fixed, ctl_fixed_b4, ctl_fixed_b5, ctl_fixed_b6,
+                  ctl_screen, ctl_screen_b4, ctl_screen_b5, ctl_screen_b6]
   dev2: {benchmarks: {deepscholar: {split: dev2, limit: 20}}}   # Nov dev2
   test:  # the final test's first 90 tasks: every arm (docs/06); serve d1, d1-sft and d1-rl first
     budget: {run_usd: 25.0, judge_run_usd: 10.0}
@@ -154,6 +186,24 @@ variants:
     budget: {run_usd: 1.0, judge_run_usd: 1.0}
     benchmarks:
       deepscholar: {split: test, limit: 90, samples: 1, systems: [closed_book]}
+  test-screen:  # the held-out confirmation of the d1 screener (docs/07_screener.md), frozen:
+    # adapter 0ec04682, delta .7, as on dev; 90 test tasks, two writer samples
+    budget: {run_usd: 20.0, judge_run_usd: 8.0}
+    benchmarks:
+      deepscholar:
+        split: test
+        limit: 90
+        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
+  drb2-test:  # transfer check (docs/06_training_and_test.md): the frozen test-screen systems on
+    # 12 fresh DRB2 test tasks (6 en, 6 zh), arXiv only for every system, two writer samples
+    budget: {run_usd: 8.0, judge_run_usd: 4.0}
+    benchmarks:
+      deepscholar: null
+      drb2:
+        split: test
+        limit: 12
+        samples: 2
+        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
   replay:  # $0 check: the baselines regenerate from the replay cache, byte-identical
     replay_only: true
     offpeak_only: false

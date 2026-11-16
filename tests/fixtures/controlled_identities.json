@@ -1,0 +1,313 @@
+{
+ "eval-dev-trained/ctl_fixed": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 3
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  }
+ },
+ "eval-dev-trained/ctl_d1": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "d1"
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "d1"
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "d1",
+    "adapter": null,
+    "profile": {
+     "titles": 10,
+     "style": "sections",
+     "threshold": 0.5
+    },
+    "sample": false
+   }
+  }
+ },
+ "eval-dev-trained/ctl_fixed_b4": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 4
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 4
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 4
+   }
+  }
+ },
+ "eval-dev-trained/ctl_fixed_b5": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 5
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 5
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 5
+   }
+  }
+ },
+ "eval-dev-trained/ctl_fixed_b6": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 6
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 6
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 6
+   }
+  }
+ },
+ "rollouts-train/ctl_fixed": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 3
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  }
+ },
+ "branches-rollouts-train-b1-explore/branch": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   },
+   "start": {
+    "run": "rollouts-train",
+    "system": "ctl_fixed",
+    "batches": 1,
+    "take": "explore"
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "fixed",
+     "retrieval": [
+      "abstract",
+      "explore"
+     ],
+     "batches": 3
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": {
+     "run": "rollouts-train",
+     "system": "ctl_fixed",
+     "batches": 1,
+     "take": "explore"
+    },
+    "sample": 0
+   },
+   "policy": {
+    "kind": "fixed",
+    "retrieval": [
+     "abstract",
+     "explore"
+    ],
+    "batches": 3
+   }
+  }
+ }
+}

@@ -223,3 +223,30 @@ def test_the_final_test_is_frozen():
     assert hashlib.sha256("\n".join(first).encode()).hexdigest()[:16] == "66bd8fa271d545da"
     assert (second[0], second[-1]) == ("2511.10539v1", "2510.00351v1")
     assert hashlib.sha256("\n".join(second).encode()).hexdigest()[:16] == "e391d433eb4366a6"
+
+
+def test_drb2_request_is_the_prompt_without_the_rule() -> None:
+    """The controller's first query on DRB2: every real prompt, test and dev, loses its
+    forbidden-article rule (which names the article, so the policy would block the whole prompt)
+    and the rest is an allowed query, except where the request names the article itself."""
+    from jevscholar.benchmarks import split_ids
+    from jevscholar.benchmarks.drb2 import RULE
+    from jevscholar.search.policy import text_allowed
+
+    _clear_caches()
+    try:
+        bench = DRB2()
+        tasks = bench.tasks("test") + bench.tasks("dev")
+        assert len(tasks) == 132
+        named = set()  # requests that name the article themselves
+        for task in tasks:
+            seed = task.meta["request"]
+            assert seed and RULE not in seed and task.prompt.startswith(seed)
+            assert "not allowed to view" not in seed
+            if task.policy.blocked_titles:  # the rule names it (some tasks block nothing)
+                assert not text_allowed(task.prompt, task.policy)
+            if not text_allowed(seed, task.policy):
+                named.add(task.id)
+    finally:
+        _clear_caches()
+    assert named == {"58"} and "58" not in split_ids("drb2", "test", 12)  # the check's tasks

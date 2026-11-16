@@ -75,6 +75,18 @@ def data_arxiv_index() -> None:
     typer.echo(arxiv_local.build_index())
 
 
+@data_app.command("fulltext")
+def data_fulltext(
+    runs: Annotated[list[str], typer.Argument(help="Runs whose writer documents to fetch.")],
+) -> None:
+    """Fetch the full text of the runs' writer documents (arXiv PDFs) into cache/fulltext/."""
+    from jevscholar.search import fulltext
+
+    urls = [u for run in runs for u in fulltext.run_docs(_run_dir(run))]
+    typer.echo(f"{len(set(urls))} documents")
+    typer.echo(dict(fulltext.fetch(urls)))
+
+
 # --------------------------------------------------------------------------- runs
 @app.command()
 def run(
@@ -461,6 +473,53 @@ def controller_labels(
     for point in left_out:
         typer.echo(f"  left out (a branch failed or missing): {point[2]} after {point[3]} batches")
     typer.echo(f"d1's decoder on the targets misses the best option at {off} of {len(points)}")
+
+
+@controller_app.command("frontier")
+def controller_frontier(
+    run: Annotated[str, typer.Argument(help="A reported run with d1 and fixed-rule systems.")],
+) -> None:
+    """The d1 controllers against the fixed rule's cost-quality curve, at matched cost."""
+    from jevscholar.controller.frontier import frontier_report
+
+    typer.echo(frontier_report(_run_dir(run)))
+
+
+@controller_app.command("headroom")
+def controller_headroom(
+    run: Annotated[str, typer.Argument(help="A reported run with fixed-rule budgets.")],
+    metric: Annotated[
+        list[str] | None, typer.Option(help="Metrics (default: utility, nugget_coverage).")
+    ] = None,
+) -> None:
+    """What a per-task stopping oracle could gain over the fixed rule at matched cost."""
+    from jevscholar.controller.headroom import headroom_report
+
+    typer.echo(headroom_report(_run_dir(run), metric or ["utility", "nugget_coverage"]))
+
+
+@controller_app.command("screen-data")
+def controller_screen_data(
+    out: Annotated[
+        Path, typer.Argument(help="Directory for train, val and dev .jsonl and their metas.")
+    ],
+) -> None:
+    """d1 relevance-screening examples from every run's DeepSeek screening verdicts."""
+    from jevscholar.controller.screen import screen_data
+
+    typer.echo(json.dumps(screen_data(out), indent=2))
+
+
+@controller_app.command("screen-eval")
+def controller_screen_eval(
+    data: Annotated[Path, typer.Argument(help="screen-data examples (train.jsonl or dev.jsonl).")],
+    out: Annotated[Path, typer.Option(help="Per-example P(relevant), JSONL.")],
+    adapter: Annotated[Path | None, typer.Option(help="A trained adapter (default: none).")] = None,
+) -> None:
+    """d1 as the relevance screener against DeepSeek and the real citations (.venv-train)."""
+    from jevscholar.controller.screen import score
+
+    typer.echo(score(data, out, adapter))
 
 
 @controller_app.command("sanity-data")

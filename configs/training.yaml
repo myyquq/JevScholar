@@ -46,3 +46,12 @@ rl1:  # the registered RL round (docs/06): its points are frozen before any roll
   optimizer_steps: 4
   groups_per_step: 2
   seed: 0
+screen:  # d1 as the relevance screener on DeepSeek's verdicts (docs/07_screener.md)
+  train: data/derived/controller/screen/train.jsonl  # `jev controller screen-data`: train tasks
+  dev: data/derived/controller/screen/val.jsonl  # val tasks choose the step; June dev is held out
+  out: runs/controller/screen
+  epochs: 2
+  lr: 2.0e-4
+  batch_tokens: 8192
+  accum: 4
+  eval_every: 100  # about one epoch (3,143 verdicts, about 94 steps): steps 0, 100 and the last
