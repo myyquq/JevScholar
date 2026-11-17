@@ -62,18 +62,35 @@ uv run jev check review-score PACK
 # the decision model (serve/train/eval run in .venv-train)
 scripts/train_env.sh jev controller serve [--adapter DIR] [--port 9940]   # a d1 policy names
                                        # the served adapter by the sha256 of its safetensors file
+uv run jev controller trajectories RUN... [--out FILE]   # train runs' decisions with their returns
 uv run jev controller branches RUN [--system ctl_d1] [--continuation ctl_d1] [--stratified]
-                                   [--tasks N] [--run-usd X] [--dry-run]
+                                   [--per-task N] [--write] [--prefix P] [--tasks N] [--run-usd X]
+                                   [--dry-run]
                                        # branch every legal candidate of a train/val run's points,
-                                       # each continued to the writer's documents (serve d1 first)
-uv run jev controller labels RUN [--system ctl_d1] [--stratified] --out FILE
-                                       # graded SFT targets from RUN's branch runs
+                                       # each continued to the writer's documents (--write: to the
+                                       # written section; serve d1 first for a d1 continuation)
+uv run jev controller labels RUN [--system ctl_d1] [--stratified] [--per-task N] [--prefix P]
+                                 [--targets graded|best] --out FILE
+                                       # SFT targets from RUN's branch runs (best: the best
+                                       # options share the target)
 uv run jev controller rl-points RUN [--n 8]               # the registered RL points of a train run
 uv run jev controller rollouts RECIPE --adapter SHA [--url URL] [--dry-run]
                                        # sample an RL recipe's groups from the served adapter
 uv run jev controller rl-data RECIPE                      # their decisions and group advantages
 scripts/train_env.sh jev controller rl RECIPE             # one registered RL update (server stopped)
 uv run jev controller gate RUN --regret SYSTEM=FILE ...   # the val gate: the main claim's d1
+uv run jev controller groups RUN --adapter DIR [--system ctl_fixed] [--first-only]
+                                 [--min-spread X] [--per-task N] [--groups N] [--size N] [--dry-run]
+                                       # RL groups sampled from the served adapter at a train
+                                       # run's points (--first-only: d1 takes one decision)
+uv run jev controller groups-data RUN... --out FILE       # the groups' advantages and decisions
+scripts/train_env.sh jev controller rl-update DATA --adapter DIR --reference DIR --out DIR
+                                       # one bounded group RL update; reverted above 0.05 nats KL
+scripts/train_env.sh jev controller regret DEV.jsonl --adapter DIR ... [--base]
+                                       # each adapter's regret on branched val points (no executor)
+uv run jev controller episodes RUN --name NAME [--adapter DIR] [--system ctl_fixed] [--dry-run]
+                                       # every task of a val run from the start, d1 choosing
+uv run jev controller compare RUN:SYSTEM...               # paired returns against the first
 uv run jev controller sanity-data DIR                     # the training-loop check's data
 scripts/train_env.sh jev controller train RECIPE          # a recipe of configs/training.yaml
 scripts/train_env.sh jev controller eval DATA.jsonl [--adapter DIR]
@@ -86,6 +103,19 @@ uv run jev controller screen-data DIR                     # d1 screening example
                                                           # logged verdicts (docs/07)
 scripts/train_env.sh jev controller screen-eval DATA.jsonl --out FILE [--adapter DIR]
                                        # d1 as the screener against the executor and the citations
+
+# cluster jobs (Slurm; each script's header lists its settings)
+sbatch scripts/rl_round.sh             # RL on one decision: serve, groups, groups-data, rl-update
+sbatch scripts/val_compare.sh          # adapters on val: regret, episodes, paired returns
+sbatch scripts/june_dev.sh             # the dev-trained variant, judged, with its frontier
+sbatch scripts/screen_eval.sh          # d1 as released as the screener (GPU, no executor calls)
+sbatch scripts/screen_sft.sh           # d1 trained as the screener, scored on June dev and val
+sbatch scripts/screen_dev.sh           # a screener variant (VARIANT), judged, with its frontier
+sbatch scripts/write_pilot.sh          # the writing revisions (CPU)
+sbatch scripts/read_pilot.sh           # full text, then the reading revisions (CPU)
+sbatch --dependency=afterok:ID --export=ALL,RUN=RUN scripts/judge.sh
+                                       # judge a run generated with JUDGE=0 (drb2-test:
+                                       # BASELINE=ctl_fixed_yield FRONTIER=0)
 
 uv run pytest                          # offline tests; -m network, -m gpu for live checks
 ```
@@ -101,10 +131,10 @@ Nine files:
 |---|---|
 | `configs/models.yaml` | upstreams, model aliases with list prices, tool prices, judge sets, the campaign cap, the pinned model version (`versions`) |
 | `configs/systems.yaml` | the system catalog: one definition per kept system version |
-| `configs/training.yaml` | d1 training recipes |
+| `configs/training.yaml` | d1 training recipes: `sanity`, `sft` and `rl1` (docs/06), `sft_fixed` (docs/06: training on fixed-rule branches), `screen` (docs/07) |
 | `configs/experiments/baselines.yaml` | DS-base and the simple baselines on the dev splits, and the audit runs (variants `june`, `seed1`, `evidence`, `nov`, `gpt41`) |
-| `configs/experiments/controller.yaml` | the controller on train and val (variants `smoke`, `rollouts`, `rollouts_d1`, `val`, `gate`) |
-| `configs/experiments/evaluate.yaml` | the main comparison at B0 (variants `dev`, `dev2`, `test`, `test-ext`, `test-closed`, `replay`); DraftRef (`dsb-dr-dev`, `dsb-dr-dev2`, `dsb-dr-test`), DraftRef with the citation rule (`dsb-drcr-dev`, `dsb-drcr-dev2`, `dsb-drcr-test`) and DS-base with d1's filter (`dsb-d1-test`); the d1 screener (`dev-screen`, `dev2-screen`, `test-screen`) and the arXiv-only DRB2 check (`drb2-test`) |
+| `configs/experiments/controller.yaml` | the controller on train and val (variants `smoke`, `rollouts`, `rollouts_d1`, `rollouts_yield`, `val`, `gate`) |
+| `configs/experiments/evaluate.yaml` | the main comparison at B0 (variants `dev`, `dev2`, `test`, `test-ext`, `test-closed`, `replay`); DraftRef (`dsb-dr-dev`, `dsb-dr-dev2`, `dsb-dr-test`), DraftRef with the citation rule (`dsb-drcr-dev`, `dsb-drcr-dev2`, `dsb-drcr-test`) and DS-base with d1's filter (`dsb-d1-test`); the trained adapters on fixed-rule branches (`dev-trained`); the d1 screener (`dev-screen`, `dev2-screen`, `test-screen`, `test-screen-180`) and the arXiv-only DRB2 check (`drb2-test`) |
 | `configs/experiments/writing.yaml`, `reading.yaml` | the writing and reading revisions of the fixed rule's drafts (variants `train`, `val`; docs/06) |
 | `configs/experiments/drb2.yaml` | the DRB2 transfer check: six DRB2 test tasks with arXiv and the web, no variants (`jev run drb2 --run-id RUN`; docs/06) |
 
@@ -236,16 +266,7 @@ manifest) is read, not re-run.
 | `dsb-drcr-dev`, `dsb-drcr-dev2`, `dsb-drcr-test` | DraftRef with the citation rule (`dsb_d1_dr_cr`) on June dev, Nov dev2 and all 180 test tasks, four writer samples; its documents equal DraftRef's (docs/06) |
 | `drb2-transfer` | the DRB2 transfer check (docs/06) |
 
-The runs below were made on the `d1-screen` line (2026-11-09 to 11-15, before the model version
-was pinned: docs/02) and are kept with that line's records. Each manifest names its commit.
-
-| Run | Backs |
-|---|---|
-| `rollouts-train`, `rollouts-val` | the fixed rule on the 34 train and 9 val tasks (`controller.yaml` `rollouts`; val with `--set benchmarks.deepscholar.split=val`): the drafts the writing and reading revisions start from |
-| `eval-dev-trained` | the fixed rule at 3 to 6 batches on June dev: the stopping headroom (docs/06) |
-| `write-pilot-train`, `write-pilot-val` | the writing revisions (docs/06) |
-| `read-pilot-train`, `read-pilot-val` | the reading revisions (docs/06) |
-| `controller/screen` | the d1 screener adapter, sha256 `0ec04682ed2c880a34e279f24df0d121671629a0a0d7e8274425fa4fddfb502e`, served as `ctl_screen`'s screener on port 9943 (docs/07) |
-| `eval-dev-screen`, `eval-dev2-screen` | the screened fixed rule against the fixed curve on June dev and Nov dev2 (docs/07) |
-| `eval-test-screen` | the screener's registered test on the first 90 test tasks (docs/07) |
-| `eval-drb2-test` | the arXiv-only DRB2 check (docs/06) |
+The runs made before the model version was pinned (2026-11-09 to 11-15) are listed in docs/08
+with their commits and results: the fixed rule's rollouts (`rollouts-train`, `rollouts-val`, the
+drafts the writing and reading revisions start from) and branches, the training on fixed-rule
+branches, `eval-dev-trained`, the writing and reading pilots, the d1 screener and `eval-drb2-test`.

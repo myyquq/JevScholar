@@ -1,17 +1,20 @@
 # 6. Training d1, the final test and DraftRef
 
 This document covers training d1 (a short supervised warm start, then bounded reinforcement
-learning) and its val gate, the final DeepScholar test, the headroom of the loop's decisions,
-DraftRef (DS-base writing from its search draft's references), and two small DRB2 transfer
-checks. Names: **d1** is the untrained decision model (`ctl_d1`: the released checkpoint with its
-prompt); **d1-sft** and **d1-rl** are d1 after the warm start and after RL.
+learning) and its val gate, the final DeepScholar test, the headroom of the loop's decisions, a
+second training protocol on the fixed rule's branches, DraftRef (DS-base writing from its search
+draft's references), and two small DRB2 transfer checks. Names: **d1** is the untrained decision
+model (`ctl_d1`: the released checkpoint with its prompt); **d1-sft** and **d1-rl** are d1 after
+the warm start and after RL. The second protocol's adapters are **d1-sft-fixed** and
+**d1-rl-first**.
 
 ## Conditions of every comparison
 
 - **Caps.** The controllers are capped at B0 per task ($0.27 on DeepScholar-Bench, $0.67 on
-  DRB2) and plan within it. DS-base runs at its natural cost, under a cap it never reaches ($2;
-  its most expensive task cost $1.50, a DRB2 task it failed). U is always normalised by B0. The
-  controllers' cost advantage is therefore measured against DS-base's natural cost.
+  DRB2; the arXiv-only DRB2 check below sets $0.34) and plan within it. DS-base runs at its
+  natural cost, under a cap it never reaches ($2; its most expensive task cost $1.50, a DRB2 task
+  it failed). U is always normalised by B0. The controllers' cost advantage is therefore measured
+  against DS-base's natural cost.
 - **The fixed rule** compared in every table is the one selected on val (docs/05).
 
 ## Training d1
@@ -275,8 +278,8 @@ and scored on the same noisy scores mostly picks writer noise, so each is cross-
 samples: the choice is made on one sample and scored on the other, both ways, and averaged per task
 (`jev controller headroom RUN`, paired 95% intervals). For stopping, these are each budget's two
 independent writer samples; for revising and reading, two revision samples of the same draft, so the
-draft's own noise is shared by every choice (submitting has one report). These runs were made on the
-`d1-screen` line before the model version was pinned (docs/02).
+draft's own noise is shared by every choice (submitting has one report). These runs predate the
+model-version pin (docs/02).
 
 - **When to stop** (run `eval-dev-trained`, June dev, 20 tasks). The fixed rule at 3 to 6
   batches gives a cost–quality curve, U .378, .382, .396 and .399, from $.021 to $.047 a task.
@@ -316,15 +319,77 @@ beyond the writer's sample-to-sample noise at matched cost; more search budget d
 the draft diagnosis above, this points to the writer's input rather than the controller's
 choices. d1's other use, screening papers in place of the executor, is in docs/07.
 
-## Trained-controller comparison on June dev
+## Training on fixed-rule branches
 
-This comparison uses the d1-screen line's SFT and RL adapters: SFT on fixed-rule branch
-labels, then RL on one sampled decision with a fixed continuation. These differ from the
-adapters used for the registered test above. The runs predate model-version pinning (docs/02).
+A second protocol trains d1 on the fixed rule's episodes rather than on d1's own, with the yield
+prompt set (docs/05). Its adapters are d1-sft-fixed (`ctl_d1_sft_fixed`,
+`runs/controller/sft_fixed/adapter`) and d1-rl-first (`ctl_d1_rl_first`,
+`runs/controller/rl/first/r1/adapter`), both in `configs/systems.yaml`. The rewards and data rules
+are the ones above. These runs predate the model-version pin (docs/02); docs/08 lists them under
+the names they were recorded with.
 
-**June dev result** (run `eval-dev-trained`, 20 tasks, two writer samples averaged; from
-runs/eval-dev-trained/frontier.md). The fixed rule at 5 and 6 batches is the matched-cost
-reference for d1-sft and d1-rl.
+1. **Source and branches.** The source is the fixed rule with the yield prompt set on the 34
+   train and 9 val tasks (`controller.yaml` `rollouts_yield`; val with `--set
+   benchmarks.deepscholar.split=val`). A branch built from a source run keeps the source's prompt
+   set. Every decision point where the rules left a choice, in finished episodes of tasks with
+   important citations, is branched. Each branch is continued by the same fixed rule and writes
+   its section, so its return includes the writer's spend (`jev controller branches RUN --system
+   ctl_fixed_yield --continuation ctl_fixed --write`).
+2. **Targets.** Only the options with the best return share the target, equally. Retrieval
+   returns are deterministic given the evidence, so only ties share, to within float rounding
+   (1e-9; `jev controller labels RUN --system ctl_fixed_yield --targets best --out FILE`). This
+   gives 135 labelled decisions from the train tasks (438 branches) and 36 from val (117
+   branches), in `data/derived/controller/sft_fixed/train.jsonl` and `dev.jsonl`.
+3. **SFT** (`sft_fixed` in `configs/training.yaml`; `jev controller train sft_fixed`). The
+   settings are LoRA r 16, learning rate 2e-4, cosine after a 5% warmup, four forwards per
+   optimiser step and two epochs. The adapter is scored before training and at each epoch's end,
+   and the one with the lowest val soft-target cross-entropy is d1-sft-fixed. On val the
+   cross-entropy falls from 0.980 to 0.954, accuracy stays at 58% and ECE falls from 0.122 to
+   0.095.
+4. **RL on the first decision.**
+   - **Points.** The train points whose options' branch returns differ by more than 0.01, 46 of
+     the 135. At the others every option ends within about one batch's cost (0.002) of the rest.
+   - **Groups.** Each point is restored for a group of 8 members. In each, d1-sft-fixed chooses
+     the point's option at temperature 1 and the fixed rule continues (`policy: {kind: first,
+     first: {kind: d1, sample: true, adapter: <sha256>}, then: <fixed>}`). A member's return
+     therefore differs only by that one choice, and sampling is seeded by run, system, task and
+     decision.
+   - **Advantage.** A = (R − group mean) / max(group SD, 0.02). A group whose returns span less
+     than 0.001 is skipped.
+   - **Update.** One epoch in four optimiser steps, dropout off, learning rate 1e-5, one round.
+     The loss is −min(rA, clip(r, 0.8, 1.2)·A) + 0.05 times the exact categorical KL to the
+     frozen d1-sft-fixed. π_old is recomputed with the training readout before the first step,
+     since the served one-row readout differs from it by up to 0.03. The update is reverted,
+     with nothing saved, if the mean KL exceeds 0.05 nats per decision.
+   - **Commands.** `scripts/rl_round.sh` runs `jev controller groups RUN --adapter
+     runs/controller/sft_fixed/adapter --system ctl_fixed_yield --first-only --min-spread 0.01
+     --per-task 0 --groups 64 --size 8` with that adapter served, then
+     `jev controller groups-data` and `jev controller rl-update`. The code is in
+     `controller/groups.py`, `group_rl_update` in `controller/d1.py` and `FirstThen` in
+     `controller/policy.py`.
+   - **Outcome.** 368 trajectories; 45 groups and 360 decisions trained. The median
+     within-group spread is 0.018, the mean |A| 0.40, the mean KL to d1-sft-fixed 0.039 and the
+     clip fraction 0.64.
+5. **Val comparison** (`scripts/val_compare.sh`). It is judge-free, and val never becomes RL
+   data. Every val task is run from the start with each adapter choosing (`jev controller
+   episodes`), scored by the retrieval return and paired per task with the fixed rule's own val
+   run (`jev controller compare`). Each adapter's regret against the best branch is also scored
+   on the 36 branched val points (`jev controller regret`).
+
+| System (9 val tasks) | Return | Δ vs fixed (± SE) | Recall | Cost | Batches |
+|---|---|---|---|---|---|
+| fixed rule | .0102 | — | .121 | $.022 | 3.0 |
+| d1-sft-fixed | .0084 | −.0018 ± .0026 | .141 | $.035 | 3.6 |
+| d1-rl-first | .0129 | +.0027 ± .0077 | .220 | $.054 | 5.2 |
+
+d1-rl-first searches longer than d1-sft-fixed: it finishes at 8% of the val points, against 28%.
+It finds more important citations on 3 of the 4 tasks where their episodes differ, and at the 14
+val points whose options' returns differ its regret is .0068 (d1-sft-fixed .0074). With 9 tasks
+the difference is not resolved, so June dev compares both with the fixed rule.
+
+**June dev result** (variant `dev-trained`, run `eval-dev-trained`, 20 tasks, two writer samples
+averaged; from runs/eval-dev-trained/frontier.md). The fixed rule at 5 and 6 batches is the
+matched-cost reference for the trained adapters.
 
 | system | $ | nugget | ref recall | cite_p | claim support | U |
 |---|---|---|---|---|---|---|
@@ -332,15 +397,16 @@ reference for d1-sft and d1-rl.
 | fixed b4 | .028 | .215 | .218 | .580 | .886 | .382 |
 | fixed b5 | .041 | .231 | .247 | .558 | .884 | .396 |
 | fixed b6 | .047 | .242 | .244 | .538 | .867 | .399 |
-| d1 (untrained) | .050 | .214 | .247 | .594 | .891 | .379 |
-| d1-sft | .031 | .220 | .221 | .539 | .835 | .377 |
-| d1-rl | .043 | .214 | .245 | .525 | .861 | .372 |
+| d1 (untrained, yield prompts) | .050 | .214 | .247 | .594 | .891 | .379 |
+| d1-sft-fixed | .031 | .220 | .221 | .539 | .835 | .377 |
+| d1-rl-first | .043 | .214 | .245 | .525 | .861 | .372 |
 
-Against fixed b3, d1-sft and d1-rl are a little more complete (nugget +.015 and +.010, neither
-interval excludes 0) at 1.5-2 times the cost, and less reliable (cite_p −.076 and −.090, the
-latter significant, p .016). Against the cheapest fixed budget costing at least as much (d1-sft
-vs b5, d1-rl vs b6) no metric is higher; d1-sft is significantly lower on reference recall
-(−.026 [−.049, −.003]) and claim support (−.049 [−.091, −.007]). Neither goes to test.
+Against fixed b3, d1-sft-fixed and d1-rl-first are a little more complete (nugget +.015 and
++.010, neither interval excludes 0) at 1.5 to 2 times the cost. They are also less reliable
+(cite_p −.076 and −.090, the latter significant, p .016). Against the cheapest fixed budget
+costing at least as much (d1-sft-fixed against b5, d1-rl-first against b6) no metric is higher;
+d1-sft-fixed is significantly lower on reference recall (−.026 [−.049, −.003]) and claim support
+(−.049 [−.091, −.007]). Neither goes to test.
 
 ## DraftRef: DS-base writing from its draft's references
 
@@ -597,14 +663,14 @@ Every score interval includes 0: on six tasks no system's total differs resolvab
 The other three cost less than DS-base, each with its cost interval wholly below 0.
 
 **A second check, arXiv only** (variant `drb2-test`, run `eval-drb2-test`, made at commit
-`763dc4c` on the `d1-screen` line). DRB2 test[:12] in the same frozen order, 6 en and 6 zh, so
+`763dc4c`, before the model-version pin). DRB2 test[:12] in the same frozen order, 6 en and 6 zh, so
 its first six are the tasks above. arXiv only for every system, two writer samples: DS-base
 intro-only, Simple RAG (K = 20), the fixed rule at 3 batches and the screened cells of docs/07 at
-3 and 4 batches. The controllers planned within a B0 of $0.34 and searched with that commit's
-DRB2 wording (the research request without its forbidden-article rule as the first query); the
-DRB2 B0 is now $0.67 and the DRB2 search is the one above, so the variant no longer reproduces
-this run. Metrics are DRB2's own: total (primary), info recall, analysis and
-presentation.
+3 and 4 batches. The controllers planned within a B0 of $0.34 (the variant's `budget.task_usd`)
+on the yield prompt set (docs/05; the variant's `_yield` cells), with the research request
+without its forbidden-article rule as the first query. The run predates the model-version pin,
+so it cannot be resumed (docs/02; its recorded names are in docs/08). Metrics are DRB2's own:
+total (primary), info recall, analysis and presentation.
 
 When the relevance filter keeps no paper, DS-base's writer, which the controllers share, raises
 and the report is empty, scored 0. Failed tasks of 12 (both samples): Simple RAG 0, screened b4

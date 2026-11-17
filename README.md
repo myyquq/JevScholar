@@ -21,8 +21,8 @@ the controllers have a per-task cap, while DeepScholar-base runs at its natural 
   the paper's protocol at about a seventh of GPT-4.1's cost; DeepSeek judges agree with the
   official OpenAI judges on the checked citation and rubric judgments (item κ 0.74–0.93) but not
   on organization (docs/02). The DeepSeek results come from one pinned model version, except
-  the runs of the screener, the decision headroom and the arXiv-only DRB2 check, whose version
-  was not recorded (docs/02).
+  the runs of the screener, the decision headroom, the training on fixed-rule branches and the
+  arXiv-only DRB2 check, whose version was not recorded (docs/02, docs/08).
 - **The controller.** d1 (no weight update) costs 26–28% of DeepScholar-base, writes
   better-supported sections (claim support +0.10 on June, +0.13 on Nov dev) and finds about as
   many important citations. Its coverage of the reference content is within noise of DS-base's
@@ -33,7 +33,10 @@ the controllers have a per-task cap, while DeepScholar-base runs at its natural 
   (docs/05).
 - **Training.** A supervised warm start on d1's own counterfactual branches (d1-sft), then
   bounded RL on d1-sft's sampled trajectories (d1-rl). Both stop after one batch on val and fail
-  the registered val gate, so the held-out test's main claim is made with d1 (docs/06).
+  the registered val gate, so the held-out test's main claim is made with d1 (docs/06). A second
+  protocol trains on the fixed rule's branches, with RL on one decision and the fixed rule
+  continuing. Its adapters search longer on val, but on June dev they sit on or below the fixed
+  rule's cost-quality curve (docs/06).
 - **The final test** (180 held-out Nov test tasks; docs/06). The main claim fails: d1 costs 28% of
   DeepScholar-base and its citations are better supported (claim support +0.122 [0.106, 0.138]),
   but its nugget coverage is lower (−0.053 [−0.073, −0.033]) and its reference recall misses the
@@ -70,8 +73,9 @@ the controllers have a per-task cap, while DeepScholar-base runs at its natural 
 | [docs/03_baselines_and_metrics.md](docs/03_baselines_and_metrics.md) | DeepScholar-base's defects and repairs, the evaluation's defects, the added metrics and their formulas, baseline results |
 | [docs/04_data_and_evaluation.md](docs/04_data_and_evaluation.md) | datasets and splits, the evaluation flow, scoring and statistics, cost accounting |
 | [docs/05_controller.md](docs/05_controller.md) | the controlled loop, its actions and rules, the policies, results |
-| [docs/06_training_and_test.md](docs/06_training_and_test.md) | the conditions of every comparison, training d1 (SFT and RL), the val gate, the final test, the decision headroom, DraftRef, the two DRB2 transfer checks, the research question, limitations and risks |
-| [docs/07_screener.md](docs/07_screener.md) | d1 as the relevance screener: its labels, offline scoring, the cascade in the loop, development results and its registered test |
+| [docs/06_training_and_test.md](docs/06_training_and_test.md) | the conditions of every comparison, training d1 (SFT and RL), the val gate, the final test, the decision headroom, training on fixed-rule branches, DraftRef, the two DRB2 transfer checks, the research question, limitations and risks |
+| [docs/07_screener.md](docs/07_screener.md) | d1 as the relevance screener: its labels, offline scoring, the cascade in the loop, development results, its registered test and an exploratory 180-task run |
+| [docs/08_experiment_log.md](docs/08_experiment_log.md) | the runs made before the model version was pinned: commits, what each tested, results, adapters |
 | [docs/usage.md](docs/usage.md) | setup, commands, configuration, layout, reproducibility, run index |
 
 ## Quick start

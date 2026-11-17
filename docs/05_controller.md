@@ -85,10 +85,10 @@ corpora, its list starts with one Tavily search for 20 hits (the query cut to Ta
 characters) and continues down its arXiv ranked list, 10 new results a batch; a proposed keyword
 query's first page comes from the web while the task has web operations left, then from arXiv;
 `deepen` reads arXiv only and passes over a query whose first page came from the web. Web hits
-are screened from their snippets, never read as pages. The proposer and d1 read report wording:
-the instructions name the research report the task asks for, and the prompt search is "the
-research request"; the action names stay. Web pages are not logged in `pages.jsonl`, so a DRB2
-decision point is not restored with them.
+are screened from their snippets, never read as pages. Under the default prompt set (below) the
+proposer and d1 read report wording: the instructions name the research report the task asks for,
+and the prompt search is "the research request"; the action names stay. Web pages are not logged
+in `pages.jsonl`, so a DRB2 decision point is not restored with them.
 
 ## The policies
 
@@ -120,6 +120,27 @@ paper and least like the relevant papers already found. Finish only when the pap
 prior work are covered and no search is likely to add relevant papers." The prompt is in
 `controller/prompt.py`. A state too long for d1's validated length (7,552 tokens) is shown with
 fewer titles and previews, never without the budget or batch count.
+
+**Prompt sets.** A controlled cell's `prompts` picks one of two sets of texts. A set covers d1's
+retrieval instruction, the prompted executor's rules of thumb, and on DRB2 the executor's wording
+when it proposes keyword queries. The default, `relevance`, is the set quoted above. With `yield`,
+d1 reads: "… Keep searching while searches still find new relevant papers and the paper's main
+lines of prior work are not yet covered; finish once they are covered, or once the last searches
+found few new relevant papers." On DRB2 it keeps that related-work wording for d1 and calls the
+prompt search "the paper's abstract". The `yield` set's rules and proposer wording are in
+`controller/policy.py` and `systems/controlled.py`. The key is left out of a cell's identity at
+its default, so cells without it keep theirs. The `_yield` systems of `configs/systems.yaml` and
+`evaluate.yaml` set it. A run built from a source run (branches, RL groups, episodes) keeps the
+source's set.
+
+**Writing decisions.** A cell that lists revisions in `revise` (docs/06: decision headroom) offers
+`submit` and the affordable revisions after the first draft. Any policy may take them, d1
+included. d1 then reads the draft (up to 6,000 characters, its citations numbered by the writer's
+documents) and is told to revise while the draft says more than its cited sources support, or
+misses the paper's problem, the field's key ideas or relevant documents; and to submit once another
+revision would add little for its cost. `submit` ends the episode, as `finish` ends retrieval. A
+policy of `kind: first` lets its `first` policy (d1, say) make the restored point's decision and
+its `then` policy (the fixed rule) make the rest; RL on one decision uses it (docs/06).
 
 **How d1 answers.** d1 reads the prompt once; each option's probability is the softmax over the
 options of its code's best token log-probability at the answer slot. Nothing is decoded. Our

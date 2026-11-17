@@ -4,8 +4,8 @@ d1 as a controller (docs/05, docs/06) replaces a fixed rule that costs nothing, 
 by deciding better, and no retrieval, writing or reading decision of the loop has resolvable room
 for that (docs/06: decision headroom). This document uses d1 the other way: it takes over the
 executor's most frequent short judgment, whether a retrieved paper is relevant, and the money
-saved goes to more search. The fixed rule still decides the searches. The runs here were made on
-the `d1-screen` line before the model version was pinned (docs/02).
+saved goes to more search. The fixed rule still decides the searches. The runs here predate the
+model-version pin, so their version is not recorded (docs/02).
 
 ## Why screening
 
@@ -232,6 +232,40 @@ Against the hypotheses:
 The screener's saving carries over to the test tasks (−36% at the same batches) with no metric
 detectably lower, but the registered non-inferiority in U is not shown at 90 tasks, and spending
 the saving on a fourth batch moves completeness up only within noise.
+
+**Exploratory: all 180 test tasks** (variant `test-screen-180`, run `eval-test-screen-180`). Decided
+after the 90-task result, so it is not a confirmation: the same frozen systems on the whole test
+split, two writer samples, to narrow the intervals. The first 90 tasks did not replay exactly: every
+task was judged again, and only part of the generations repeated byte for byte (Simple RAG 90 of
+90, the controllers 45 to 60, DS-base none). The run is therefore a second pass over the first 90
+plus the 90 new tasks, not the 90-task run extended.
+
+| System | Cost per task | Nugget | Ref. recall | cite_p | Claim support | Claim cov. | U |
+|---|---|---|---|---|---|---|---|
+| DS-base intro-only | $.191 | .432 | .230 | .413 | .776 | .686 | .512 |
+| Simple RAG (K = 20) | $.003 | .368 | .117 | .466 | .831 | .718 | .513 |
+| fixed b3 | $.0210 | .364 | .143 | .582 | .881 | .767 | .522 |
+| screened b3 | $.0133 | .372 | .148 | .586 | .877 | .770 | .534 |
+| screened b4 | $.0185 | .387 | .166 | .559 | .879 | .776 | .547 |
+
+| A − B (180 tasks; ref. recall 168) | Nugget | Ref. recall | cite_p | Claim support | Claim cov. | Cost | U |
+|---|---|---|---|---|---|---|---|
+| screened b3 − fixed b3 | +.008 [−.009, .024] | +.005 [−.006, .016] | +.005 [−.011, .021] | −.004 [−.017, .008] | +.003 [−.010, .016] | −$.0077* | +.011 [−.005, .027] |
+| screened b4 − fixed b3 | +.023 [.005, .042]* | +.023 [.004, .042]* | −.023 [−.043, −.003]* | −.002 [−.014, .010] | +.009 [−.003, .022] | −$.0025* | +.025 [.007, .043]* |
+| screened b4 − screened b3 | +.016 [−.001, .033] | +.018 [.003, .033]* | −.028 [−.046, −.009]* | +.002 [−.011, .015] | +.006 [−.007, .020] | +$.0053* | +.014 [−.003, .031] |
+| DS-base − fixed b3 | +.068 [.042, .095]* | +.087 [.047, .126]* | −.168 [−.190, −.147]* | −.105 [−.123, −.087]* | −.081 [−.099, −.063]* | +$.1702* | −.010 [−.036, .016] |
+| DS-base − screened b4 | +.045 [.019, .070]* | +.064 [.024, .104]* | −.146 [−.168, −.123]* | −.103 [−.120, −.086]* | −.090 [−.108, −.073]* | +$.1727* | −.035 [−.061, −.009]* |
+| DS-base − Simple RAG | +.064 [.042, .087]* | +.113 [.070, .156]* | −.053 [−.075, −.030]* | −.054 [−.074, −.035]* | −.033 [−.052, −.014]* | +$.1882* | .000 [−.024, .023] |
+
+Simple RAG's 90 identical texts, judged twice, differ per task with an SD of .071 in nugget
+coverage and .038 in cite_p, so differences of ±.01 in a 90-task mean are within the judges' and
+the writer's run-to-run noise: the 90-task run's screened b3 − fixed b3 nugget, −.013, is +.005 on
+the same tasks here. On 180 tasks the screener again costs 36% less with every metric within noise
+of the fixed rule. Spending the saving on a fourth batch (screened b4, still 12% cheaper than fixed
+b3) is more complete (nugget and reference recall +.023) and less precise in its citations (cite_p
+−.023), with claim support unchanged, and its U is higher than fixed b3's and DS-base's. Being
+decided after the 90-task result, with the first 90 tasks counted in both runs, this does not
+replace the registered result above.
 
 ## d1 as screener in DraftRef
 
