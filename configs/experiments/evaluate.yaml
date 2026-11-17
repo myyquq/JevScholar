@@ -34,6 +34,9 @@ systems:
   ctl_screen_b5: {extends: ctl_screen, policy: {batches: 5}}
   ctl_screen_b6: {extends: ctl_screen, policy: {batches: 6}}
   ctl_screen_b8: {extends: ctl_screen, max_batches: 8, policy: {batches: 8}}
+  # the screened cells on the yield prompt set (configs/systems.yaml)
+  ctl_screen_yield: {extends: ctl_screen, prompts: yield}
+  ctl_screen_b4_yield: {extends: ctl_screen_b4, prompts: yield}
 benchmarks:
   deepscholar:
     samples: 2
@@ -41,6 +44,13 @@ benchmarks:
 
 variants:
   dev: {benchmarks: {deepscholar: {split: dev, limit: 20}}}     # June dev
+  dev-trained:  # June dev: d1 on the yield prompt set and its two trained adapters against the
+    benchmarks:  # fixed rule's cost-quality curve (docs/06); scripts/june_dev.sh
+      deepscholar:
+        split: dev
+        limit: 20
+        systems: [ctl_fixed, ctl_d1_yield, ctl_d1_sft_fixed, ctl_d1_rl_first,
+                  ctl_fixed_b4, ctl_fixed_b5, ctl_fixed_b6]
   dev-screen:  # June dev: the screened fixed rule against the fixed curve
     benchmarks:
       deepscholar:
@@ -194,16 +204,25 @@ variants:
         split: test
         limit: 90
         systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
+  test-screen-180:  # exploratory, decided after test-screen's result (docs/07_screener.md): the
+    budget: {run_usd: 20.0, judge_run_usd: 16.0}  # same frozen systems on all 180 test tasks
+    benchmarks:
+      deepscholar:
+        split: test
+        limit: 180
+        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
   drb2-test:  # transfer check (docs/06_training_and_test.md): the frozen test-screen systems on
-    # DRB2 test[:12] (6 en, 6 zh; the first six are drb2.yaml's), arXiv only, two writer samples
-    budget: {run_usd: 8.0, judge_run_usd: 4.0}
+    # DRB2 test[:12] (6 en, 6 zh; the first six are drb2.yaml's), arXiv only, two writer samples;
+    # the controllers plan within a B0 of $0.34, on the yield prompt set
+    budget: {task_usd: 0.34, run_usd: 8.0, judge_run_usd: 4.0}
     benchmarks:
       deepscholar: null
       drb2:
         split: test
         limit: 12
         samples: 2
-        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed, ctl_screen, ctl_screen_b4]
+        systems: [deepscholar_base_intro, simple_rag_k20, ctl_fixed_yield, ctl_screen_yield,
+                  ctl_screen_b4_yield]
   replay:  # $0 check: the baselines regenerate from the replay cache, byte-identical
     replay_only: true
     offpeak_only: false

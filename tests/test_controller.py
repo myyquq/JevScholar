@@ -1,8 +1,10 @@
-"""d1 decision model: examples, option shuffling, batching and metrics (pure); readout parity with
-the checkpoint's own `system_one` and a learning check (`-m gpu`, in `.venv-train`)."""
+"""d1 decision model: examples, option shuffling, batching, metrics and trajectory labels (pure);
+readout parity with the checkpoint's own `system_one` and a learning check (`-m gpu`, in
+`.venv-train`)."""
 
 from __future__ import annotations
 
+import json
 import math
 import random
 
@@ -120,6 +122,74 @@ def test_kept_adapters_rank_by_regret_then_cross_entropy():
     ]
     assert min(steps, key=lambda h: (*selection_key(h["dev"]), h["step"]))["step"] == 2
     assert selection_key({"ce": 0.5}) == (0.5,)  # without labelled points: cross-entropy
+
+
+# --------------------------------------------------------------------------- trajectories
+def train_run(tmp_path, monkeypatch, tasks=("t1", "t2")):
+    """A train run with one fixed-policy episode per task: an abstract batch finds gold A, a
+    keyword batch gold B, then the batch cap forces finish."""
+    from jevscholar.controller import data
+    from jevscholar.controller.state import Candidate, Paper, State, snapshot
+    from jevscholar.types import Task
+
+    def row(title):
+        return {"url": f"http://x.org/{title.replace(' ', '_')}", "title": title, "snippet": "s"}
+
+    gold_a, gold_b, other = row("gold a"), row("gold b"), row("other")
+    abstract = Candidate("abstract", "abs", (gold_a, other), 150, 0.001)
+    explore = Candidate("explore", "kw", (row("noise"),), 10, 0.001)
+    keyword = Candidate("explore", "kw2", (gold_b,), 10, 0.001)
+    finish = Candidate("finish")
+    s0 = State("T", 0.27, "abs")
+    s1 = State("T", 0.27, "abs", spent_usd=0.01, batches=1)
+    s1.papers = [Paper(gold_a, True), Paper(other, False)]
+    s2 = State("T", 0.27, "abs", spent_usd=0.02, batches=2)
+    s2.papers = [*s1.papers, Paper(gold_b, True)]
+    steps = [  # (snapshot, executed, forced, the decision's own policy cost)
+        (snapshot(s0, [abstract, explore], 0), 0, False, 0.001),  # left out of the returns
+        (snapshot(s1, [keyword, finish], 0), 0, False, 0.0),
+        (snapshot(s2, [finish], 0), 0, True, 0.0),
+    ]
+    run = tmp_path / "train-run"
+    for task in tasks:
+        folder = run / "deepscholar" / "ctl" / "tasks" / task
+        folder.mkdir(parents=True)
+        rows = [gold_a, gold_b, other, row("noise")]
+        (folder / "rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        lines = [
+            snap
+            | {"requested": c, "executed": c, "forced": f, "overridden": False}
+            | {"control_usd": u, "probs": None, "input": None, "spent_after_usd": 0.0}
+            for snap, c, f, u in steps
+        ]
+        (folder / "decisions.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+        (folder / "result.json").write_text("{}")
+    experiment = {"benchmarks": {"deepscholar": {"split": "train", "systems": ["ctl"]}}}
+    (run / "manifest.json").write_text(json.dumps({"experiment": experiment}))
+    tasks_of = {t: Task("deepscholar", t, "T") for t in tasks}
+    monkeypatch.setattr(data, "run_tasks", lambda manifest, bench: tasks_of)
+    gold = {"gold a", "gold b"}
+    monkeypatch.setattr(data, "gold_found", lambda task, ids, titles: (len(titles & gold), 2))
+    return run
+
+
+def test_trajectories_label_each_decision(tmp_path, monkeypatch):
+    from jevscholar.controller.data import trajectories
+
+    found = trajectories([train_run(tmp_path, monkeypatch)])
+    assert [t["task"] for t in found] == ["t1", "t2"]
+    t = found[0]
+    assert [p["scored"] for p in t["points"]] == [True, True, False]  # the forced finish is not
+    returns = [0.0, 0.075 - 0.1 * 0.009 / 0.27, 0.15 - 0.1 * 0.019 / 0.27]
+    assert [p["return"] for p in t["points"]] == pytest.approx(returns)
+    assert t["end"] == pytest.approx(returns[-1])  # where the episode finished
+    proxy = t["points"][0]["proxy"]  # abstract: gold A; explore: nothing
+    assert proxy == pytest.approx([0.075 - 0.1 * 0.001 / 0.27, -0.1 * 0.001 / 0.27])
+    assert len(t["rows"]) == 4 and t["points"][0]["executed"] == 0
+    with pytest.raises(ValueError, match="train"):
+        manifest = tmp_path / "train-run" / "manifest.json"
+        manifest.write_text(manifest.read_text().replace('"train"', '"dev"'))
+        trajectories([tmp_path / "train-run"])
 
 
 # --------------------------------------------------------------------------- GPU (.venv-train)

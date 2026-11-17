@@ -46,3 +46,17 @@ ctl_d1_rl:  # d1-sft after the registered RL round (docs/06), served on its own 
 ctl_prompted:  # the executor answering d1's prompt, with rules of thumb
   use: controlled
   policy: {kind: prompted}
+# The yield prompt set (docs/05): d1 keeps searching while searches still find new relevant
+# papers, the prompted executor has its own rules, and on DRB2 the executor proposes keyword
+# queries in its own wording. d1 on it, d1 trained on fixed-rule branches (sft_fixed) and that
+# adapter after RL on its first decision (docs/06), each served on its own port.
+ctl_fixed_yield: {extends: ctl_fixed, prompts: yield}
+ctl_d1_yield: {extends: ctl_d1, prompts: yield}
+ctl_d1_sft_fixed:  # runs/controller/sft_fixed/adapter
+  extends: ctl_d1_yield
+  policy: {url: "http://127.0.0.1:9941",
+           adapter: dabf7875e4091468400e50fa90a67c54d2dbce7969ac73d97df05280d03c45b6}
+ctl_d1_rl_first:  # runs/controller/rl/first/r1/adapter
+  extends: ctl_d1_yield
+  policy: {url: "http://127.0.0.1:9942",
+           adapter: 2fa87a6904389d5d0503cd46f5aaf0fe91107a7231ce753e4c30fa5256f79807}

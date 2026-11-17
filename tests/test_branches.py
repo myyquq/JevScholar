@@ -108,6 +108,10 @@ def test_forks_are_the_choices_of_finished_gold_tasks(source):
     one = branches.forks(source, "ctl_fixed", stratified=True)  # both points are early ones
     assert len(one) == 2 and {f.task for f in one} == {"t1", "t2"}
     assert one == branches.forks(source, "ctl_fixed", stratified=True)  # a fixed pick
+    per_task = branches.forks(source, "ctl_fixed", per_task=1)
+    assert len(per_task) == 2 and {f.task for f in per_task} == {"t1", "t2"}
+    assert per_task == branches.forks(source, "ctl_fixed", per_task=1)
+    assert branches.forks(source, "ctl_fixed", per_task=2) == found
 
 
 def test_only_train_and_val_episode_runs_are_sources(source):
@@ -160,6 +164,19 @@ def test_one_experiment_per_batches_and_kind(source):
     assert (exp.budget.run_usd, exp.seed, exp.replay_only) == (0.1, 0, False)
     with pytest.raises(ValueError, match="runs under"):
         branches.experiments(Path("/elsewhere/src"), "ctl_fixed", found, policy=policy, run_usd=1)
+    written = branches.experiments(
+        source, "ctl_fixed", found, policy=policy, run_usd=0.1, write=True, prefix="w"
+    )
+    assert list(written) == [name.replace("branches-src", "w") for name in exps]
+    assert "write" not in written["w-b1-finish"].systems["branch"]  # the section is written
+    data = json.loads((source / "manifest.json").read_text())
+    data["experiment"]["systems"]["ctl_fixed"]["write"] = False  # a retrieval-only source
+    (source / "manifest.json").write_text(json.dumps(data))
+    kw = {"policy": policy, "run_usd": 0.1}
+    retrieval = branches.experiments(source, "ctl_fixed", found, **kw)
+    written = branches.experiments(source, "ctl_fixed", found, **kw, write=True)
+    assert retrieval["branches-src-b0-abstract"].systems["branch"]["write"] is False
+    assert "write" not in written["branches-src-b0-abstract"].systems["branch"]
 
 
 def branch_run(
@@ -241,6 +258,12 @@ def test_outcomes_and_soft_targets(source):
     assert examples[0].state["search batches"] == "0 of 6"
     assert list(examples[1].question["criteria"]) == ["1. abstract", "2. finish"]
     assert points[2]["returns"][0] == points[2]["returns"][1]
+    best, _, _ = branches.examples(found, targets="best")  # the best options share the mass
+    assert [e.target for e in best] == [
+        {"1. abstract": 1.0},  # more gold at the same cost
+        {"1. abstract": 1.0},  # gold b is worth its extra cost
+        {"1. abstract": 0.5, "2. explore": 0.5},  # an exact tie
+    ]
 
     with pytest.raises(ValueError, match="several splits"):
         branches.examples([found[0], found[1] | {"split": "val"}])
@@ -265,14 +288,14 @@ def test_a_branch_that_restored_another_snapshot_is_an_error(source):
         branches.outcomes([run])
 
 
-def test_a_writing_run_is_not_a_branch_run(source):
+def test_a_writing_branch_is_scored_like_a_retrieval_only_one(source):
     run = branch_run("b0-abstract", 0, "abstract", {"t1": ["gold a"]})
+    before = branches.outcomes([run])
     manifest = run / "manifest.json"
     data = json.loads(manifest.read_text())
     del data["experiment"]["systems"]["branch"]["write"]
     manifest.write_text(json.dumps(data))
-    with pytest.raises(ValueError, match="not a branch run"):
-        branches.outcomes([run])
+    assert [o["return"] for o in branches.outcomes([run])] == [o["return"] for o in before]
 
 
 def test_soft_targets_fall_with_the_return_gap():
@@ -280,6 +303,12 @@ def test_soft_targets_fall_with_the_return_gap():
     q = soft_target({"a": 0.1, "b": 0.1 - branches.TAU})
     assert q["a"] / q["b"] == pytest.approx(math.e)
     assert soft_target({"a": 0.2, "b": 0.0})["b"] < 1e-15
+
+
+def test_best_targets_share_only_ties_within_float_rounding():
+    assert branches.best_target({"a": 0.1, "b": 0.1, "c": 0.0}) == {"a": 0.5, "b": 0.5}
+    assert branches.best_target({"a": 0.1, "b": 0.1 - 1e-12}) == {"a": 0.5, "b": 0.5}
+    assert branches.best_target({"a": 0.1, "b": 0.1 - 1e-6}) == {"a": 1.0}
 
 
 def test_a_source_must_come_from_the_pinned_model_version(source):

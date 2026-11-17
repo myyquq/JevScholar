@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 import typer
 
-from jevscholar.paths import CONFIGS, RUNS
+from jevscholar.paths import CONFIGS, DATA_DERIVED, RUNS
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
 data_app = typer.Typer(no_args_is_help=True, help="Fetch pinned sources and build splits.")
@@ -403,6 +403,21 @@ def controller_serve(
     serve(adapter, port)
 
 
+@controller_app.command("trajectories")
+def controller_trajectories(
+    runs: Annotated[list[str], typer.Argument(metavar="RUN...", help="DeepScholar train runs.")],
+    out: Annotated[Path, typer.Option(help="JSONL output.")] = DATA_DERIVED / "trajectories.jsonl",
+) -> None:
+    """The retrieval trajectories of controlled train runs, each decision with its return."""
+    from jevscholar.controller.data import trajectories
+    from jevscholar.util import write_jsonl
+
+    found = trajectories(_run_dir(r) for r in runs)
+    write_jsonl(out, found)
+    points = sum(len(t["points"]) for t in found)
+    typer.echo(f"{out}: {len(found)} trajectories, {points} retrieval decisions")
+
+
 @controller_app.command("branches")
 def controller_branches(
     source: Run,
@@ -414,22 +429,27 @@ def controller_branches(
     stratified: Annotated[
         bool, typer.Option(help="One early and one late decision point a task.")
     ] = False,
+    per_task: Annotated[int | None, typer.Option(help="At most N decision points a task.")] = None,
+    write: Annotated[bool, typer.Option(help="Branches also write their section.")] = False,
+    prefix: Annotated[str | None, typer.Option(help="Run id prefix.")] = None,
     run_usd: Annotated[float, typer.Option(help="Billed cap of each branch run.")] = 0.5,
     workers: Workers = None,
     dry_run: Annotated[bool, typer.Option(help="Print the branch runs only.")] = False,
 ) -> None:
     """Branch every legal candidate of a train or val run's decision points (docs/06), each
-    continued to the writer's documents without writing: one run per (batches, kind),
-    runs/branches-<RUN>-b<batches>-<kind>, resumable. A d1 continuation needs
-    `jev controller serve`."""
+    continued to the writer's documents without writing (with --write, to the written section):
+    one run per (batches, kind), runs/<prefix>-b<batches>-<kind> (`branches-<RUN>` by default),
+    resumable. A d1 continuation needs `jev controller serve`."""
     from jevscholar.controller.branches import continuation_policy, experiments, forks, provenance
     from jevscholar.runner import run_experiment
 
     path = _run_dir(source)
     provenance(path, system)
-    found = forks(path, system, tasks=tasks, stratified=stratified)
+    found = forks(path, system, tasks=tasks, stratified=stratified, per_task=per_task)
     policy = continuation_policy(continuation)
-    exps = experiments(path, system, found, policy=policy, run_usd=run_usd)
+    exps = experiments(
+        path, system, found, policy=policy, run_usd=run_usd, write=write, prefix=prefix
+    )
     branches = sum(len(f.kinds) for f in found)
     typer.echo(f"{len(found)} decision points, {branches} branches in {len(exps)} runs")
     for run_id, exp in exps.items():
@@ -452,19 +472,26 @@ def controller_labels(
     stratified: Annotated[
         bool, typer.Option(help="One early and one late decision point a task.")
     ] = False,
+    per_task: Annotated[int | None, typer.Option(help="At most N decision points a task.")] = None,
+    prefix: Annotated[str | None, typer.Option(help="The branch runs' id prefix.")] = None,
+    targets: Annotated[
+        str, typer.Option(help="graded, or best: the options with the best return share it.")
+    ] = "graded",
 ) -> None:
-    """Graded SFT targets from the branch runs of a source run's decision points, given the
-    options `jev controller branches` had: every planned point is labelled or left out."""
+    """SFT targets from the branch runs of a source run's decision points, given the options
+    `jev controller branches` had: every planned point is labelled or left out."""
     from jevscholar.controller.branches import examples, forks, outcomes, run_ids, run_name
     from jevscholar.controller.d1 import write_examples
     from jevscholar.util import write_jsonl
 
     path = _run_dir(source)
-    found = forks(path, system, tasks=tasks, stratified=stratified)
-    ids = sorted(set(run_ids(path, found).values()))
+    if targets not in ("graded", "best"):
+        raise typer.BadParameter("--targets is graded or best")
+    found = forks(path, system, tasks=tasks, stratified=stratified, per_task=per_task)
+    ids = sorted(set(run_ids(path, found, prefix).values()))
     runs = [RUNS / i for i in ids if (RUNS / i / "manifest.json").exists()]
     planned = [(run_name(path), system, f.key, f.batches) for f in found]
-    labelled, points, left_out = examples(outcomes(runs), planned=planned)
+    labelled, points, left_out = examples(outcomes(runs), planned=planned, targets=targets)
     write_examples(out, labelled)
     write_jsonl(out.with_suffix(".points.jsonl"), points)
     off = sum(not p["decoded_best"] for p in points)
@@ -473,6 +500,196 @@ def controller_labels(
     for point in left_out:
         typer.echo(f"  left out (a branch failed or missing): {point[2]} after {point[3]} batches")
     typer.echo(f"d1's decoder on the targets misses the best option at {off} of {len(points)}")
+
+
+@controller_app.command("groups")
+def controller_groups(
+    source: Run,
+    adapter: Annotated[Path, typer.Option(help="The served adapter directory (sampling policy).")],
+    system: Annotated[str, typer.Option(help="The source run's controlled system.")] = "ctl_fixed",
+    groups: Annotated[int, typer.Option(help="Decision points (groups) to sample.")] = 4,
+    size: Annotated[int, typer.Option(help="Trajectories per group.")] = 4,
+    rl_round: Annotated[
+        int, typer.Option("--round", min=1, max=2, help="The RL round (picks the points).")
+    ] = 1,
+    run_usd: Annotated[float, typer.Option(help="Billed cap of each group run.")] = 0.15,
+    prefix: Annotated[str | None, typer.Option(help="Run id prefix.")] = None,
+    first_only: Annotated[
+        bool, typer.Option(help="d1 samples the restored point only; the fixed rule continues.")
+    ] = False,
+    continuation: Annotated[
+        str, typer.Option(help="The catalog system whose policy continues (--first-only).")
+    ] = "ctl_fixed",
+    min_spread: Annotated[
+        float | None,
+        typer.Option(help="Only points whose branch returns span more than this (--labels)."),
+    ] = None,
+    labels: Annotated[
+        Path, typer.Option(help="Branch points (`labels` .points.jsonl) for --min-spread.")
+    ] = DATA_DERIVED / "controller" / "sft_fixed" / "train.points.jsonl",
+    per_task: Annotated[int, typer.Option(help="Points per task at most (0: no limit).")] = 1,
+    workers: Workers = None,
+    dry_run: Annotated[bool, typer.Option(help="Print the group runs only.")] = False,
+) -> None:
+    """Sample `size` trajectories from each of `groups` decision points of a train run with the
+    served adapter (docs/06, bounded RL): one run per batches value,
+    runs/<prefix>-b<batches>, members g0, g1, ...; resumable. Needs `jev controller serve
+    --adapter ADAPTER` running."""
+    from jevscholar.controller.branches import continuation_policy, provenance, run_name
+    from jevscholar.controller.groups import experiments, points, spreads
+    from jevscholar.controller.serve import adapter_sha
+    from jevscholar.runner import run_experiment
+
+    path = _run_dir(source)
+    provenance(path, system)
+    sha = adapter_sha(adapter)
+    spread = None if min_spread is None else spreads(labels, run_name(path))
+    found = points(
+        path, system, groups, rl_round, spread=spread, min_spread=min_spread or 0.0,
+        per_task=per_task or None,
+    )  # fmt: skip
+    then = continuation_policy(continuation) if first_only else None
+    prefix = prefix or f"groups-{path.name}-r{rl_round}"
+    exps = experiments(
+        path, system, found, adapter=sha, run_usd=run_usd, size=size, prefix=prefix, then=then
+    )
+    mode = "first decision only, then the fixed rule" if first_only else "every decision"
+    typer.echo(f"{len(found)} groups of {size} ({len(found) * size} trajectories), adapter {sha}")
+    typer.echo(f"d1 samples {mode}")
+    for run_id, exp in exps.items():
+        typer.echo(f"  runs/{run_id}: {list(exp.benchmarks['deepscholar'].ids or ())}")
+    if dry_run:
+        return
+    for run_id, exp in exps.items():
+        if stopped := run_experiment(exp, RUNS / run_id, workers=workers):
+            typer.echo(f"run {run_id}: stopped early ({stopped})")
+            raise typer.Exit(1)
+        typer.echo(f"run {run_id}: complete")
+
+
+@controller_app.command("groups-data")
+def controller_groups_data(
+    runs: Annotated[list[str], typer.Argument(metavar="RUN...", help="Group runs of one round.")],
+    out: Annotated[Path, typer.Option(help="RLExample JSONL (and a .groups.jsonl beside it).")],
+) -> None:
+    """RL examples from group runs: each trajectory's retrieval return, its group-relative
+    advantage, and every decision the policy made in it."""
+    from jevscholar.controller.d1 import write_rl_examples
+    from jevscholar.controller.groups import advantages, examples, outcomes
+    from jevscholar.util import write_jsonl
+
+    groups, skipped = advantages(outcomes(_run_dir(r) for r in runs))
+    found = examples(groups)
+    write_rl_examples(out, found)
+    write_jsonl(out.with_suffix(".groups.jsonl"), groups)
+    typer.echo(f"{out}: {len(found)} decisions from {len(groups)} groups; skipped {skipped}")
+
+
+@controller_app.command("rl-update")
+def controller_rl_update(
+    data: Annotated[Path, typer.Argument(help="RLExample JSONL (`jev controller groups-data`).")],
+    adapter: Annotated[Path, typer.Option(help="The adapter that sampled the data.")],
+    reference: Annotated[Path, typer.Option(help="The frozen KL reference (the SFT adapter).")],
+    out: Annotated[Path, typer.Option(help="Output directory (adapter/, metrics.json).")],
+    lr: Annotated[float, typer.Option(help="Learning rate.")] = 5e-5,
+    steps: Annotated[int, typer.Option(min=1, help="Optimiser steps in the epoch.")] = 4,
+) -> None:
+    """One bounded RL update of d1 (clipped ratio, KL to the reference); reverted (nothing
+    saved) if the mean KL exceeds 0.05 nats per decision."""
+    from jevscholar.controller.d1 import GroupRLConfig, group_rl_update
+
+    cfg = GroupRLConfig(
+        data=data, adapter=adapter, reference=reference, out=out, lr=lr, steps=steps
+    )
+    group_rl_update(cfg, log=typer.echo)
+
+
+@controller_app.command("regret")
+def controller_regret(
+    data: Annotated[Path, typer.Argument(help="Val labels (`jev controller labels`, dev.jsonl).")],
+    adapter: Annotated[
+        list[Path] | None, typer.Option(help="An adapter to score (repeatable).")
+    ] = None,
+    base: Annotated[bool, typer.Option(help="Also score d1 without an adapter.")] = False,
+    min_spread: Annotated[
+        float, typer.Option(help="`signal`: points whose option returns span more than this.")
+    ] = 0.01,
+) -> None:
+    """Decision-level comparison on branched val points: regret of each adapter's choice
+    against the best branch, expected regret, best-option rate and soft-target CE (GPU, no
+    executor calls)."""
+    from jevscholar.controller.compare import decision_scores, with_names
+    from jevscholar.controller.d1 import D1, read_examples
+    from jevscholar.controller.serve import adapter_sha
+    from jevscholar.util import read_jsonl
+
+    examples = read_examples(data)
+    points = with_names(read_jsonl(data.with_suffix(".points.jsonl")), examples)
+    chosen: list[Path | None] = ([None] if base else []) + list(adapter or [])
+    if not chosen:
+        raise typer.BadParameter("give at least one --adapter, or --base")
+    for path in chosen:
+        d1 = D1.load(adapter=path)
+        probs = [d1.probabilities([(e.state, e.question)], render=e.render)[0] for e in examples]
+        scores = decision_scores(probs, points, min_spread=min_spread) | {
+            "adapter": str(path) if path else None,
+            "sha256": adapter_sha(path),
+        }
+        typer.echo(json.dumps(scores))
+        del d1
+
+
+@controller_app.command("episodes")
+def controller_episodes(
+    source: Run,
+    name: Annotated[str, typer.Option(help="System name and run id suffix, e.g. d1_sft.")],
+    adapter: Annotated[
+        Path | None, typer.Option(help="The served adapter (default: none, the base d1).")
+    ] = None,
+    system: Annotated[str, typer.Option(help="The source run's controlled system.")] = "ctl_fixed",
+    run_usd: Annotated[float, typer.Option(help="Billed cap of the run.")] = 0.6,
+    prefix: Annotated[str, typer.Option(help="Run id prefix.")] = "compare",
+    workers: Workers = None,
+    dry_run: Annotated[bool, typer.Option(help="Print the run only.")] = False,
+) -> None:
+    """Run every task of a val (or train) run from the start with d1 + `adapter` choosing, as
+    system NAME in runs/<prefix>-<source>-<name>; resumable. Needs `jev controller serve
+    --adapter ADAPTER` running."""
+    from jevscholar.controller.branches import provenance
+    from jevscholar.controller.compare import episode_experiment
+    from jevscholar.controller.serve import adapter_sha
+    from jevscholar.runner import run_experiment
+
+    path = _run_dir(source)
+    provenance(path, system)
+    sha = adapter_sha(adapter)
+    exp = episode_experiment(path, system, name, adapter=sha, run_usd=run_usd)
+    run_id = f"{prefix}-{path.name}-{name}"
+    typer.echo(f"runs/{run_id}: {name} = d1 with adapter {sha}")
+    if dry_run:
+        return
+    if stopped := run_experiment(exp, RUNS / run_id, workers=workers):
+        typer.echo(f"run {run_id}: stopped early ({stopped})")
+        raise typer.Exit(1)
+    typer.echo(f"run {run_id}: complete")
+
+
+@controller_app.command("compare")
+def controller_compare(
+    cells: Annotated[
+        list[str], typer.Argument(metavar="RUN:SYSTEM...", help="The first is the baseline.")
+    ],
+) -> None:
+    """Per-task retrieval returns of controlled systems' episodes, paired against the first."""
+    from jevscholar.controller.compare import compare, episode_returns, table
+
+    systems = {}
+    for cell in cells:
+        run, _, system = cell.rpartition(":")
+        if not run:
+            raise typer.BadParameter(f"{cell}: give RUN:SYSTEM")
+        systems[f"{Path(run).name}:{system}"] = episode_returns(_run_dir(run), system)
+    typer.echo(table(compare(systems)))
 
 
 @controller_app.command("frontier")

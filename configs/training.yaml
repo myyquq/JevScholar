@@ -22,6 +22,15 @@ sft:  # the supervised warm start on counterfactual branch labels (docs/06)
   batch_tokens: 8192
   accum: 1
   seed: 0
+sft_fixed:  # the supervised start on fixed-rule branches, best-option targets (docs/06)
+  train: data/derived/controller/sft_fixed/train.jsonl  # `jev controller labels --targets best`
+  dev: data/derived/controller/sft_fixed/dev.jsonl  # ... of val branch runs: select by dev CE
+  out: runs/controller/sft_fixed
+  epochs: 2
+  lr: 2.0e-4
+  batch_tokens: 8192
+  accum: 4
+  eval_every: epoch  # keep and score the adapter at each epoch's end
 rl1:  # the registered RL round (docs/06): its points are frozen before any rollout
   kind: rl
   source: ctl-train-d1

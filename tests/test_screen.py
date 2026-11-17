@@ -268,6 +268,7 @@ def test_the_test_run_is_frozen_on_the_dev_settings():
 
 
 def test_the_drb2_check_runs_the_frozen_test_systems_on_drb2_only():
+    from jevscholar.benchmarks import task_cap
     from jevscholar.config import load_experiment
     from jevscholar.paths import EXPERIMENTS
 
@@ -275,7 +276,23 @@ def test_the_drb2_check_runs_the_frozen_test_systems_on_drb2_only():
     test = load_experiment(EXPERIMENTS / "evaluate.yaml", "test-screen")
     assert list(drb2.benchmarks) == ["drb2"]  # the base's DeepScholar cell is dropped
     cell, frozen = drb2.benchmarks["drb2"], test.benchmarks["deepscholar"]
-    assert (cell.split, cell.limit) == ("test", 12) and cell.systems == frozen.systems
-    assert drb2.search.corpora == ("arxiv",)
+    assert (cell.split, cell.limit) == ("test", 12) and drb2.search.corpora == ("arxiv",)
+    for name, system in zip(cell.systems, frozen.systems, strict=True):
+        assert name.replace("_yield", "") == system
+        cls, params = drb2.system_spec(name)
+        if name != system:  # the controllers on the yield prompt set, within a B0 of $0.34
+            assert params.pop("prompts") == "yield" and task_cap(drb2, "drb2", name) == 0.34
+        assert (cls, params) == test.system_spec(system)
+    assert task_cap(drb2, "drb2", "deepscholar_base_intro") == 2.0  # its natural cost
+
+
+def test_the_full_test_run_extends_the_frozen_one():
+    from jevscholar.config import load_experiment
+    from jevscholar.paths import EXPERIMENTS
+
+    full = load_experiment(EXPERIMENTS / "evaluate.yaml", "test-screen-180")
+    first = load_experiment(EXPERIMENTS / "evaluate.yaml", "test-screen")
+    cell, frozen = full.benchmarks["deepscholar"], first.benchmarks["deepscholar"]
+    assert (cell.split, cell.limit) == ("test", 180) and cell.systems == frozen.systems
     for system in frozen.systems:
-        assert drb2.system_spec(system) == test.system_spec(system)
+        assert full.system_spec(system) == first.system_spec(system)

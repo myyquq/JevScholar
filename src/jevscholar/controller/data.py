@@ -1,17 +1,34 @@
-"""The training-loop check's data for d1.
+"""Training data for d1.
 
-`arxiv_categories` only exercises the training loop: real, free, leak-free data with a known answer
-that the released checkpoint gets partly wrong (a paper's primary arXiv category among four
-neighbouring ones).
+- `arxiv_categories` only exercises the training loop: real, free, leak-free data with a known
+  answer that the released checkpoint gets partly wrong (a paper's primary arXiv category among four
+  neighbouring ones).
+- `trajectories` turns the logged retrieval decisions of controlled runs on DeepScholar train
+  tasks into judge-free labels (rewards.py): each search candidate's proxy (important citations
+  among its new papers, less its estimated cost) and the retrieval return of stopping at each
+  decision (important citations among the relevant papers, less the cost so far and any ranking
+  the writer would still need). Policy calls are left out of the cost, so policies are compared
+  on the actions they choose. More than WRITE_DOCS relevant papers make the return an upper
+  bound (`upper`): the writer then reads only the ranked top WRITE_DOCS.
 """
 
 from __future__ import annotations
 
 import random
 import sqlite3
+from collections.abc import Iterable
 from contextlib import closing
+from pathlib import Path
+from typing import Any
 
+from jevscholar import benchmarks, rewards
+from jevscholar.artifacts import read_manifest, run_tasks
+from jevscholar.benchmarks.deepscholar import gold_found
 from jevscholar.controller.d1 import Example
+from jevscholar.controller.state import FINISH, SEARCHES, WRITE_DOCS, Costs, restore
+from jevscholar.search.policy import arxiv_id, norm_title
+from jevscholar.types import Task
+from jevscholar.util import read_jsonl
 
 CATEGORIES = {
     "cs.LG": "Machine Learning",
@@ -56,3 +73,80 @@ def arxiv_categories(n: int, *, seed: int = 0, options: int = 4) -> list[Example
             state = {"title": paper["title"], "abstract": paper["abstract"]}
             out.append(Example.labelled(state, question, primary))
     return out
+
+
+def trajectories(runs: Iterable[Path]) -> list[dict[str, Any]]:
+    """The labelled retrieval trajectories of every controlled system of the runs (each must be
+    a DeepScholar `train` run of the pinned model version): one per finished (system, task with
+    important citations)."""
+    from jevscholar.controller.branches import provenance
+
+    out = []
+    for run in runs:
+        manifest = read_manifest(run)
+        cell = manifest["experiment"]["benchmarks"]["deepscholar"]
+        if cell["split"] != "train":
+            raise ValueError(f"{run}: trajectories come from train runs only, not {cell['split']}")
+        for system in cell["systems"]:
+            provenance(run, system)
+            for key, task in run_tasks(manifest, "deepscholar").items():
+                folder = run / "deepscholar" / system / "tasks" / key
+                done = (folder / "decisions.jsonl").exists() and (folder / "result.json").exists()
+                if done and (t := trajectory(task, folder)):
+                    out.append({"run": run.name, "system": system, "task": key} | t)
+    return out
+
+
+def trajectory(task: Task, folder: Path) -> dict[str, Any] | None:
+    """One logged episode's decisions with their labels, and the return where it finished; None
+    for a task without important citations."""
+
+    def gold(rows: Iterable[dict[str, Any]]) -> int:
+        rows = list(rows)
+        ids, titles = {arxiv_id(r["url"]) for r in rows}, {norm_title(r["title"]) for r in rows}
+        return gold_found(task, ids, titles)[0]
+
+    n_gold = gold_found(task, set(), set())[1]
+    if not n_gold:
+        return None
+    b0 = benchmarks.get("deepscholar").cap_usd
+    rows = {r["url"]: r for r in read_jsonl(folder / "rows.jsonl")}
+    records = read_jsonl(folder / "decisions.jsonl")
+    points, used, control = [], set(), 0.0
+    for line, record in enumerate(records):
+        point = restore(record, rows, [])
+        state, cands = point.state, point.candidates
+        relevant = state.relevant()
+        ranking = Costs().rank_usd * len(relevant) if len(relevant) > WRITE_DOCS else 0.0
+        spent = state.spent_usd - control  # the policy's own earlier calls left out
+        recall = gold(p.row for p in relevant) / n_gold
+        used |= {p.url for p in state.papers} | {r["url"] for c in cands for r in c.rows}
+        proxy = [
+            rewards.retrieval_return(gold(c.rows) / n_gold, c.cost_usd, b0)
+            if c.kind in SEARCHES
+            else None
+            for c in cands
+        ]
+        points.append(
+            {
+                "line": line,
+                "snapshot": {k: record[k] for k in ("version", "state", "candidates", "fetched")},
+                "requested": record["requested"],
+                "executed": record["executed"],
+                "scored": not (  # the policy's own choice (a branch's taken one is not)
+                    record["forced"] or record["overridden"] or record.get("taken", False)
+                ),
+                "proxy": proxy,
+                "return": rewards.retrieval_return(recall, spent + ranking, b0),
+                "upper": bool(ranking),
+            }
+        )
+        control += record["control_usd"]
+    if not points or cands[records[-1]["executed"]].kind != FINISH:
+        return None
+    return {
+        "n_gold": n_gold,
+        "points": points,
+        "end": points[-1]["return"],
+        "rows": {url: rows[url] for url in sorted(used)},
+    }

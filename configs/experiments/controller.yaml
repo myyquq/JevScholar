@@ -26,6 +26,9 @@ variants:
   rollouts_d1:  # untrained d1 on all 34 train tasks: the states its branch labels start from
     benchmarks:
       deepscholar: {split: train, systems: [ctl_d1]}
+  rollouts_yield:  # the fixed rule on the yield prompt set, all 34 train tasks: the states its
+    benchmarks:  # fixed-rule branch labels and first-decision RL start from (val: as rollouts)
+      deepscholar: {split: train, systems: [ctl_fixed_yield]}
   val:  # selection on the 9 validation tasks: the fixed rule's batch count; d1 and the prompted
     benchmarks:  # executor measured alongside
       deepscholar:

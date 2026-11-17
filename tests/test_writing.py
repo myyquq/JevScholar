@@ -37,8 +37,9 @@ IDENTITIES = Path(__file__).parent / "fixtures" / "controlled_identities.json"
 
 @pytest.mark.parametrize("cell", sorted(json.loads(IDENTITIES.read_text())))
 def test_recorded_cells_keep_their_identity(cell):
-    """The resolved identities of the June dev comparison's systems, the train rollouts, a
-    counterfactual branch and an RL group member, as their runs' manifests recorded them."""
+    """The resolved identities of recorded controlled cells, as their runs' manifests recorded
+    them: June dev comparisons, train rollouts, branches with and without writing, RL group
+    members and rollouts, the val gate's trained d1 and the DRB2 transfer check's d1."""
     recorded = json.loads(IDENTITIES.read_text())[cell]
     params = {k: v for k, v in recorded["params"].items() if k != "use"}
     assert Controlled(params).identity() == recorded["resolved"]

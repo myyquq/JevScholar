@@ -3,14 +3,16 @@
 A branch restores a decision point of a controlled episode run (`start`), executes one of the
 candidates the rules offered there (`take`) instead of asking the policy, and continues with a
 frozen continuation policy (by default untrained d1's, `ctl_d1`) until `finish` and the choice of
-the writer's documents; nothing is written (`write: false`). Every legal candidate of a point is
-branched under the same continuation, so the branches of one point differ only in the decision
-there, and a point's returns estimate the continuation's action values there.
+the writer's documents; nothing is written (`write: false`), unless the branches are asked to
+write (then their spend includes the writer's). Every legal candidate of a point is branched under
+the same continuation, so the branches of one point differ only in the decision there, and a
+point's returns estimate the continuation's action values there.
 
 - `forks` lists the points worth branching in a source run: decisions the rules left a choice
   (two or more legal candidates) in finished episodes of tasks with important citations,
-  optionally one per batch stratum (`STRATA`: early and late) by a fixed pseudo-random pick. Only
-  `train` and `val` runs are sources: dev and test trajectories never become labels.
+  optionally one per batch stratum (`STRATA`: early and late) or at most `per_task` per task, by
+  a fixed pseudo-random pick. Only `train` and `val` runs are sources: dev and test trajectories
+  never become labels.
 - `experiments` turns them into one small experiment per (batches, kind): its tasks are those
   whose point after that many batches offers that kind, so no branch is refused. Each keeps the
   source system's settings (cap, rules, costs, actions, sample) and the source experiment's
@@ -22,8 +24,10 @@ there, and a point's returns estimate the continuation's action values there.
   search, seed, cap and resolved system, the taken kind left out), which every branch of a point
   must share; a branch that restored another snapshot than its source point, or a source or
   branch run with a reply of an unpinned model version, is an error.
-- `examples` gives each point whose every legal candidate has a return a graded soft target,
-  q(a) proportional to exp(-(best return - return of a) / TAU), and counts the points left out.
+- `examples` gives each point whose every legal candidate has a return a soft target: graded,
+  q(a) proportional to exp(-(best return - return of a) / TAU), or `best`, the options whose
+  return ties the best sharing the mass (the return is deterministic given the evidence, so only
+  ties share, to within TIE's float rounding); it counts the points left out.
   The example is what d1 reads at that point under its default profile; each point's record
   also says whether d1's decoder (`Profile.pick`) applied to the target picks the best option.
 """
@@ -37,7 +41,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from jevscholar import benchmarks, paths, rewards
 from jevscholar.artifacts import read_manifest, run_tasks, task_dir
@@ -56,6 +60,7 @@ SYSTEM = "branch"  # the system name of every branch experiment
 CONTINUATION = "ctl_d1"  # the catalog system whose policy continues every branch
 STRATA = ((0, 2), (3, MAX_BATCHES - 1))  # early and late points: batches before, inclusive
 TAU = 0.005  # target smoothing, in return units: about a third of one gold paper of ten
+TIE = 1e-9  # returns this close to the best share a `best` target
 RESTORED = ("offset_usd", "budget_usd", "max_batches", "prompts")  # what a branch's cell sets
 
 
@@ -87,12 +92,17 @@ def source_cell(manifest: dict[str, Any], system: str) -> tuple[str, dict[str, A
 
 
 def forks(
-    source: Path, system: str, *, tasks: int | None = None, stratified: bool = False
+    source: Path,
+    system: str,
+    *,
+    tasks: int | None = None,
+    stratified: bool = False,
+    per_task: int | None = None,
 ) -> list[Fork]:
     """The decision points of `system`'s finished episodes in `source` that the rules left a
     choice, on tasks with important citations: the first `tasks` tasks of the run; `stratified`:
-    at most one point per batch stratum of `STRATA` each (a fixed pseudo-random pick), in
-    episode order."""
+    at most one point per batch stratum of `STRATA` each; `per_task`: at most that many points
+    each (fixed pseudo-random picks), in episode order."""
     manifest = read_manifest(source)
     source_cell(manifest, system)
     out: list[Fork] = []
@@ -115,6 +125,9 @@ def forks(
                 for low, high in STRATA
                 if (within := [f for f in points if low <= f.batches <= high])
             ]
+        if per_task is not None:
+            pick = sorted(points, key=lambda f: digest(f"{key}|{f.batches}"))
+            points = sorted(pick[:per_task], key=lambda f: f.batches)
         out += points
     return out
 
@@ -169,24 +182,30 @@ def experiments(
     *,
     policy: dict[str, Any],
     run_usd: float,
+    write: bool = False,
+    prefix: str | None = None,
 ) -> dict[str, Experiment]:
     """Run id -> the branch experiment of one (batches, kind): the forks whose point offers that
-    kind, each restored and executing it, then continued with `policy`."""
+    kind, each restored and executing it, then continued with `policy` (and the section written,
+    with `write`)."""
     start_run, found = run_name(source), list(found)
     split, spec = source_cell(manifest := read_manifest(source), system)
     groups: dict[tuple[int, str], list[str]] = defaultdict(list)
     for fork in found:
         for kind in fork.kinds:
             groups[fork.batches, kind].append(fork.task)
-    names = run_ids(source, found)
+    names = run_ids(source, found, prefix)
     base = manifest["experiment"]
     out = {}
     for (batches, kind), ids in sorted(groups.items()):
         branch = spec | {
             "policy": policy,
             "start": {"run": start_run, "system": system, "batches": batches, "take": kind},
-            "write": False,
         }
+        if write:
+            branch.pop("write", None)  # the source may be a retrieval-only run
+        else:
+            branch["write"] = False
         raw = base | {
             "name": f"branches/{start_run}/b{batches}-{kind}",
             "replay_only": False,
@@ -198,11 +217,12 @@ def experiments(
     return out
 
 
-def run_ids(source: Path, found: Iterable[Fork]) -> dict:
+def run_ids(source: Path, found: Iterable[Fork], prefix: str | None = None) -> dict:
     """(batches, kind) -> the id of the branch run of that kind at points after that many
-    batches: `branches-<source run>-b<batches>-<kind>`."""
+    batches: `<prefix>-b<batches>-<kind>`, the prefix `branches-<source run>` by default."""
+    prefix = prefix or f"branches-{source.name}"
     pairs = {(f.batches, kind) for f in found for kind in f.kinds}
-    return {(b, k): f"branches-{source.name}-b{b}-{k}" for b, k in sorted(pairs)}
+    return {(b, k): f"{prefix}-b{b}-{k}" for b, k in sorted(pairs)}
 
 
 # --------------------------------------------------------------------------- labels
@@ -219,7 +239,7 @@ def outcomes(runs: Iterable[Path]) -> list[dict[str, Any]]:
         cell = exp["benchmarks"][BENCH]
         spec = exp["systems"].get(SYSTEM, {})
         start = spec.get("start") or {}
-        if cell["systems"] != [SYSTEM] or start.get("take") is None or spec.get("write", True):
+        if cell["systems"] != [SYSTEM] or start.get("take") is None:
             raise ValueError(f"{run} is not a branch run")
         if cell["split"] not in SPLITS:
             raise ValueError(f"{run}: labels come from {' or '.join(SPLITS)} only")
@@ -308,18 +328,26 @@ def soft_target(returns: dict[str, float], tau: float = TAU) -> dict[str, float]
     return {name: w / total for name, w in weights.items()}
 
 
+def best_target(returns: dict[str, float]) -> dict[str, float]:
+    """The options whose return ties the best, sharing the mass equally."""
+    best = max(returns.values())
+    tied = [name for name, r in returns.items() if r >= best - TIE]
+    return {name: 1 / len(tied) for name in tied}
+
+
 def examples(
     found: Iterable[dict[str, Any]],
     profile: Profile | None = None,
     planned: Iterable[tuple[str, str, str, int]] | None = None,
+    targets: Literal["graded", "best"] = "graded",
 ) -> tuple[list[Example], list[dict[str, Any]], list[tuple[str, str, str, int]]]:
     """(examples, points, left out): one example per decision point whose every legal candidate
-    has a return, as d1 reads that point under `profile`; each point's record with its options'
-    returns, the target and whether `profile.pick` on the target picks a best option; and the
-    points left out for a failed or missing branch. With `planned` (source, system, task key,
-    batches) points, every planned point is labelled or left out, and an outcome of an unplanned
-    point is an error. All outcomes must come from one split, a point's from one context, one per
-    candidate."""
+    has a return, as d1 reads that point under `profile`, with a soft target of the `targets`
+    kind; each point's record with its options' returns, the target and whether `profile.pick`
+    on the target picks a best option; and the points left out for a failed or missing branch.
+    With `planned` (source, system, task key, batches) points, every planned point is labelled or
+    left out, and an outcome of an unplanned point is an error. All outcomes must come from one
+    split, a point's from one context, one per candidate."""
     from jevscholar.systems.controlled import Start, locate
 
     found, profile = list(found), profile or Profile()
@@ -353,9 +381,10 @@ def examples(
         request = profile.request(point.state, point.candidates)
         (question,) = request["questions"]
         names = dict(zip(kinds, question["criteria"], strict=True))
-        target = soft_target({names[k]: r for k, r in returns.items()})
+        shares = soft_target if targets == "graded" else best_target
+        target = shares({names[k]: r for k, r in returns.items()})
         values = [returns[k] for k in kinds]
-        picked = profile.pick(point.candidates, [target[names[k]] for k in kinds])
+        picked = profile.pick(point.candidates, [target.get(names[k], 0.0) for k in kinds])
         out.append(Example(request["state"], question, target, render=profile.render))
         points.append(
             {"source": source, "system": system, "task": key, "batches": batches}

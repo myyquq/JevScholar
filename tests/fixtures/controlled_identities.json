@@ -471,5 +471,224 @@
     }
    }
   }
+ },
+ "ctl-gate/ctl_d1_sft": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "d1",
+    "url": "http://127.0.0.1:9941",
+    "adapter": "468be59ba272304d25389071abd284f39a25d48b59de0d238b2c73c23c30fcc0"
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "d1",
+     "url": "http://127.0.0.1:9941",
+     "adapter": "468be59ba272304d25389071abd284f39a25d48b59de0d238b2c73c23c30fcc0"
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "d1",
+    "adapter": "468be59ba272304d25389071abd284f39a25d48b59de0d238b2c73c23c30fcc0",
+    "profile": {
+     "titles": 10,
+     "style": "sections",
+     "threshold": 0.5
+    },
+    "sample": false
+   }
+  }
+ },
+ "ctl-gate/ctl_d1_rl": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "d1",
+    "url": "http://127.0.0.1:9942",
+    "adapter": "da7d4837e2ea79627ca20d0318f13625be9d1d9fd9e094d03a219e8024c61bcf"
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "d1",
+     "url": "http://127.0.0.1:9942",
+     "adapter": "da7d4837e2ea79627ca20d0318f13625be9d1d9fd9e094d03a219e8024c61bcf"
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "d1",
+    "adapter": "da7d4837e2ea79627ca20d0318f13625be9d1d9fd9e094d03a219e8024c61bcf",
+    "profile": {
+     "titles": 10,
+     "style": "sections",
+     "threshold": 0.5
+    },
+    "sample": false
+   }
+  }
+ },
+ "rl1-b3/rollout_s1": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "d1",
+    "sample": true,
+    "adapter": "468be59ba272304d25389071abd284f39a25d48b59de0d238b2c73c23c30fcc0",
+    "url": "http://127.0.0.1:9941"
+   },
+   "start": {
+    "run": "ctl-train-d1",
+    "system": "ctl_d1",
+    "batches": 3
+   },
+   "write": false,
+   "sample": 1
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "d1",
+     "sample": true,
+     "adapter": "468be59ba272304d25389071abd284f39a25d48b59de0d238b2c73c23c30fcc0",
+     "url": "http://127.0.0.1:9941"
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": {
+     "run": "ctl-train-d1",
+     "system": "ctl_d1",
+     "batches": 3
+    },
+    "sample": 1,
+    "write": false
+   },
+   "policy": {
+    "kind": "d1",
+    "adapter": "468be59ba272304d25389071abd284f39a25d48b59de0d238b2c73c23c30fcc0",
+    "profile": {
+     "titles": 10,
+     "style": "sections",
+     "threshold": 0.5
+    },
+    "sample": true
+   }
+  }
+ },
+ "branches-ctl-train-d1-b0-abstract/branch": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "d1"
+   },
+   "start": {
+    "run": "ctl-train-d1",
+    "system": "ctl_d1",
+    "batches": 0,
+    "take": "abstract"
+   },
+   "write": false
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "d1"
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": {
+     "run": "ctl-train-d1",
+     "system": "ctl_d1",
+     "batches": 0,
+     "take": "abstract"
+    },
+    "sample": 0,
+    "write": false
+   },
+   "policy": {
+    "kind": "d1",
+    "adapter": null,
+    "profile": {
+     "titles": 10,
+     "style": "sections",
+     "threshold": 0.5
+    },
+    "sample": false
+   }
+  }
+ },
+ "drb2-transfer/ctl_d1": {
+  "params": {
+   "use": "controlled",
+   "policy": {
+    "kind": "d1"
+   }
+  },
+  "resolved": {
+   "version": "2",
+   "params": {
+    "policy": {
+     "kind": "d1"
+    },
+    "actions": [
+     "abstract",
+     "explore",
+     "deepen"
+    ],
+    "max_batches": 6,
+    "budget_usd": null,
+    "costs": {},
+    "start": null,
+    "sample": 0
+   },
+   "policy": {
+    "kind": "d1",
+    "adapter": null,
+    "profile": {
+     "titles": 10,
+     "style": "sections",
+     "threshold": 0.5
+    },
+    "sample": false
+   }
+  }
  }
 }
