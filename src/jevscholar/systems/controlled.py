@@ -40,8 +40,8 @@ pages, kept apart from arXiv's, are not logged in pages.jsonl (a report task's d
 not restored with them).
 
 Writing decisions (`revise`, empty by default: the cell then is what it was before they existed)
-follow the first draft: the fixed rule (its `revise` sequence; no other policy makes them)
-chooses among the offered revisions and `submit` (controller/state.py: write_legal). A revision
+follow the first draft: the policy (the fixed rule: its `revise` sequence) chooses among the
+offered revisions and `submit` (controller/state.py: write_legal). A revision
 calls DS-base's own section writer again, with the current draft as its existing content
 (citations as numbers into the writer's documents, which stay the same) and REVISE's
 instructions, on the `revise` stage. Each writing decision is appended to writes.jsonl, in the
@@ -61,6 +61,10 @@ papers first, one request per batch charged as the `d1_choice` tool: a paper who
 P(not relevant) reaches the screener's `delta` is decided by d1, the others by DS-base's
 sem_filter as above (the same per-paper requests, so their verdicts replay). Every paper's
 P(relevant) and who decided it are appended to screens.jsonl.
+
+`prompts` picks the prompt set d1, the prompted policy and the proposer read (`relevance` by
+default, omitted from the identity; `yield`: controller/prompt.py). With `yield` a report task's
+proposer reads YIELD_REPORT_PROPOSE, and d1 its related-work wording.
 """
 
 from __future__ import annotations
@@ -80,7 +84,7 @@ from pydantic import Field, SerializerFunctionWrapHandler, model_serializer
 
 from jevscholar import paths
 from jevscholar.artifacts import task_dir
-from jevscholar.controller.policy import D1Policy, Decision, Fixed, Policy, make_policy
+from jevscholar.controller.policy import D1Policy, Decision, FirstThen, Policy, make_policy
 from jevscholar.controller.prompt import label
 from jevscholar.controller.screen import served_probabilities
 from jevscholar.controller.state import (
@@ -138,6 +142,19 @@ REPORT_PROPOSE = (  # a report task's: its own first sentence, then PROPOSE's
     "You are searching for the sources needed to write the research report the task below asks "
     "for. " + PROPOSE.partition("in the task below. ")[2]
 )
+YIELD_REPORT_PROPOSE = """\
+You are searching arXiv for the sources needed to write the research report
+requested in the task below. Write one new English search query (3-10 keywords) that would find
+relevant papers the searches so far have missed. Output the query only, nothing else.
+
+Task:
+{topic}
+
+Searches so far (new papers, relevant):
+{searches}
+
+Relevant papers found so far:
+{titles}"""  # a report task's under the `yield` prompt set
 LIST_ITEM = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 REVISE = {
     "ground": "Revision for citation accuracy: rewrite the existing section so that every sentence "
@@ -206,16 +223,20 @@ class Controlled(System):
         start: Start | None = None
         sample: int = 0  # > 0: an independent writer sample
         write: bool = True  # False: stop once the writer's documents are chosen
+        prompts: Literal["relevance", "yield"] = "relevance"  # the prompt set (controller/prompt)
         revise: tuple[Revision, ...] = ()  # revisions offered after drafting
         screener: Screener | None = None  # d1 screens first (None: DeepSeek screens all)
 
         @model_serializer(mode="wrap")
         def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-            """Without `write: false`, revisions or a screener, the parameters a cell had before
-            they existed: the cell identity of every earlier run stays the same."""
+            """Without `write: false`, revisions, a screener or another prompt set, the parameters
+            a cell had before they existed: the cell identity of every earlier run stays the
+            same."""
             out = handler(self)
             if self.write:
                 out.pop("write", None)
+            if self.prompts == "relevance":
+                out.pop("prompts", None)
             if not self.revise:
                 out.pop("revise", None)
             if self.screener is None:
@@ -225,20 +246,23 @@ class Controlled(System):
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__(params)
         self.costs = Costs(**self.p.costs)
-        policy = make_policy(self.p.policy)  # fail at construction, not on the first task
-        if self.p.revise and not isinstance(policy, Fixed):
-            raise ValueError("writing decisions (`revise`) are made by the fixed rule only")
+        make_policy(self.p.policy)  # fail at construction, not on the first task
 
     def preflight(self) -> None:
-        """A d1 policy's server must serve the policy's adapter."""
+        """A d1 policy's server (a FirstThen's parts' too) must serve the policy's adapter."""
         policy = make_policy(self.p.policy)
-        if isinstance(policy, D1Policy):
-            policy.preflight()
+        parts = (policy.first, policy.then) if isinstance(policy, FirstThen) else (policy,)
+        for part in parts:
+            if isinstance(part, D1Policy):
+                part.preflight()
 
     def identity(self) -> dict[str, Any]:
         """The policy with its defaults (d1's profile) resolved, as well as the parameters (where
         the d1 server listens is not part of it)."""
         policy = make_policy(self.p.policy).model_dump(mode="json", exclude={"url"})
+        for part in ("first", "then"):  # a FirstThen's parts (no other policy has them)
+            if isinstance(policy.get(part), dict):
+                policy[part].pop("url", None)
         identity = super().identity() | {"policy": policy}
         if isinstance(identity["params"].get("screener"), dict):
             identity["params"]["screener"].pop("url", None)
@@ -254,15 +278,16 @@ class Controlled(System):
         if p.start is None:
             request = task.meta.get("request")  # a research report's: searched as the abstract is
             abstract = request or task.meta.get("abstract", "")
-            state = State(task.prompt, budget, abstract, p.max_batches, report=request is not None)
-            first, pages = None, {}
+            report = request is not None
+            state = State(task.prompt, budget, abstract, p.max_batches, report=report)
+            state.prompts, first, pages = p.prompts, None, {}
         else:
             point = locate_write(task, p.start) if writing else locate(task, p.start)
             state, first, pages = point.state, point.candidates, point.pages
             if state.topic != task.prompt:
                 raise ValueError("the decision point belongs to another task")
             state.offset_usd = state.spent_usd
-            state.budget_usd, state.max_batches = budget, p.max_batches
+            state.budget_usd, state.max_batches, state.prompts = budget, p.max_batches, p.prompts
             record = {"offset_usd": state.offset_usd, "batches": state.batches}
             (ctx.out_dir / "start.json").write_text(json.dumps(record))  # kept if the run fails
         with dsb.task_scope(ctx.search, task.seed, repair_citations=True):
@@ -527,7 +552,8 @@ class Loop:
             f"- {label(state, q.text)} ({q.new}, {q.relevant})" for q in state.queries
         )
         titles = "\n".join(f"- {p.row['title']}" for p in state.relevant()[-20:])
-        prompt = (REPORT_PROPOSE if state.report else PROPOSE).format(
+        report = YIELD_REPORT_PROPOSE if state.prompts == "yield" else REPORT_PROPOSE
+        prompt = (report if state.report else PROPOSE).format(
             topic=state.topic, searches=searches or "(none)", titles=titles or "(none)"
         )
         reply = await chat(self.ctx, "propose", prompt, max_tokens=PROPOSE_TOKENS)

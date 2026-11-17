@@ -9,6 +9,8 @@
   asks: the profile's choice, or a sample (seeded per task and decision) for RL rollouts. Each
   call is admitted and charged to the task as the `d1_choice` tool, per started thousand prompt
   tokens, so the cap covers the controller too.
+- `FirstThen`: one policy for the episode's first asked decision, another for the rest (RL
+  groups that sample one decision of d1 and continue with the fixed rule, as branches do).
 
 Every policy returns a Decision: the index of the chosen candidate and, where the policy has
 them, its probabilities over the candidates and the exact input they came from (d1's request and
@@ -32,6 +34,7 @@ from typing import Annotated, Any, Literal, Protocol
 import requests
 from pydantic import (
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     TypeAdapter,
     model_serializer,
@@ -49,6 +52,14 @@ RULES = """Rules of thumb: the paper's abstract is a strong first query, and a k
 at a line of prior work still missing a good later one; prefer searches whose new papers look
 relevant to the paper and unlike those already found; finish only when the paper's main lines of
 prior work are covered and no search is likely to add relevant papers."""
+# The `yield` prompt set's rules (their planning and revising clauses name actions no longer
+# offered; the text is kept as that set was evaluated with).
+YIELD_RULES = """\
+Rules of thumb: search while searches still find new relevant papers and the paper's
+main lines of prior work are not covered yet; the paper's abstract is a strong first query, and a
+keyword query aimed at what is still missing a good later one; finish once searches add few new
+relevant papers; plan when the relevant papers span several distinct lines of work; revise when
+the section may state more than its sources support."""
 
 
 @dataclass(frozen=True)
@@ -97,9 +108,9 @@ class Fixed(Strict):
 
 
 class Prompted(Strict):
-    """The executor decides on exactly what d1 reads under `profile`, with RULES before the
-    question's last line when `rules`. The profile's threshold belongs to d1's probability
-    readout, not to a prompt."""
+    """The executor decides on exactly what d1 reads under `profile`, with RULES (YIELD_RULES
+    under the `yield` prompt set) before the question's last line when `rules`. The profile's
+    threshold belongs to d1's probability readout, not to a prompt."""
 
     kind: Literal["prompted"] = "prompted"
     profile: Profile = Profile()
@@ -111,7 +122,8 @@ class Prompted(Strict):
         text = user_turn(request["state"], question, self.profile.render)
         if self.rules:
             head, last = text.rsplit("\n\n", 1)
-            text = f"{head}\n\n{RULES}\n\n{last}"
+            rules = YIELD_RULES if state.prompts == "yield" else RULES
+            text = f"{head}\n\n{rules}\n\n{last}"
         reply = await chat(ctx, "choose", text, max_tokens=CHOOSE_TOKENS)
         index = parse(reply, len(candidates))
         if index is None:
@@ -222,8 +234,24 @@ class D1Screen(Strict):
         return {row["url"]: p for row, p in zip(rows, probs, strict=True)}
 
 
-PolicySpec = Annotated[Fixed | Prompted | D1Policy, Field(discriminator="kind")]
-_POLICY: TypeAdapter[Fixed | Prompted | D1Policy] = TypeAdapter(PolicySpec)
+class FirstThen(Strict):
+    """`first` decides the first decision it is asked (a restored point's, in an RL group), `then`
+    every later one. A fresh policy is made per episode (`make_policy`), so "first" is per
+    episode."""
+
+    kind: Literal["first"] = "first"
+    first: Annotated[Fixed | Prompted | D1Policy, Field(discriminator="kind")]
+    then: Annotated[Fixed | Prompted | D1Policy, Field(discriminator="kind")]
+    _asked: bool = PrivateAttr(default=False)
+
+    async def choose(self, ctx: TaskContext, state: State, candidates: list[Candidate]) -> Decision:
+        policy = self.then if self._asked else self.first
+        self._asked = True
+        return await policy.choose(ctx, state, candidates)
+
+
+PolicySpec = Annotated[Fixed | Prompted | D1Policy | FirstThen, Field(discriminator="kind")]
+_POLICY: TypeAdapter[Fixed | Prompted | D1Policy | FirstThen] = TypeAdapter(PolicySpec)
 
 
 def make_policy(spec: dict[str, Any]) -> Policy:

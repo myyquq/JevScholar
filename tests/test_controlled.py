@@ -161,6 +161,58 @@ def test_a_report_task_reads_report_wording_and_is_saved_as_one():
     assert "report" not in snapshot(State(TOPIC, 1.0), cands, 0)["state"]
 
 
+def test_the_yield_prompt_set_keeps_the_related_work_wording(
+    gateway, lotus_fakes, tmp_path, monkeypatch
+):
+    """`prompts: yield`: d1 reads YIELD_INSTRUCTIONS and the prompt search as the paper's abstract,
+    on a report task too; the prompted policy reads YIELD_RULES and a report task's proposer
+    YIELD_REPORT_PROPOSE. The default set is left out of the identity and the snapshot."""
+    from jevscholar.controller import policy
+    from jevscholar.controller.prompt import YIELD_INSTRUCTIONS
+    from jevscholar.systems import controlled
+
+    s = State(TOPIC, 1.0, "the request", report=True, queries=[Query("the request", 1, 10, 3)])
+    s.prompts = "yield"
+    cands = [Candidate("abstract", "the request", (row("2.1"),)), Candidate("explore", "e")]
+    cands.append(Candidate("finish"))
+    request = Profile().request(s, cands)
+    (question,) = request["questions"]
+    assert question["instructions"] == YIELD_INSTRUCTIONS
+    assert question["criteria"]["1. abstract"].startswith("search with the paper's abstract: ")
+    point = snapshot(s, cands, 0)
+    assert point["state"]["prompts"] == "yield"
+    assert restore(point, {r["url"]: r for c in cands for r in c.rows}, []).state == s
+    assert "prompts" not in snapshot(State(TOPIC, 1.0), cands, 0)["state"]
+
+    asked: list[str] = []
+
+    async def chat(ctx: Any, stage: str, prompt: str, max_tokens: int) -> str:
+        asked.append(prompt)
+        return "A"
+
+    with monkeypatch.context() as m:
+        m.setattr(policy, "chat", chat)
+        asyncio.run(policy.Prompted().choose(None, s, cands))
+        s.prompts = "relevance"
+        asyncio.run(policy.Prompted().choose(None, s, cands))
+    assert policy.YIELD_RULES in asked[0] and policy.RULES not in asked[0]
+    assert policy.RULES in asked[1]
+
+    request = "Write a report on graph agents"
+    out = tmp_path / "y"
+    ctx = make_ctx(gateway, out)
+    ctx.task = Task("drb2", "y", request + "\n\n**important** no X", meta={"request": request})
+    params = {"budget_usd": 1.0, "policy": {"kind": "fixed"}, "costs": COSTS, "max_batches": 2}
+    asyncio.run(Controlled(params | {"prompts": "yield"}).run(ctx))
+    state = State.from_json((out / "state.json").read_text())
+    assert state.queries[0].text == request and state.prompts == "yield"
+    proposals = ScriptedUpstream.prompts
+    assert proposals and all(p.startswith(controlled.YIELD_REPORT_PROPOSE[:60]) for p in proposals)
+    plain = Controlled(params).identity()["params"]
+    assert "prompts" not in plain
+    assert Controlled(params | {"prompts": "yield"}).identity()["params"]["prompts"] == "yield"
+
+
 def test_policy_specs_are_validated():
     assert make_policy({"kind": "fixed", "retrieval": ["deepen"]}) == Fixed(retrieval=("deepen",))
     assert make_policy({"kind": "d1", "profile": {"titles": 10}}).profile == Profile(titles=10)
@@ -561,6 +613,30 @@ def test_a_branch_takes_its_candidate_then_continues(gateway, lotus_fakes, tmp_p
 
     with pytest.raises(ValueError, match="'deepen' is not offered"):
         run_task(gateway, tmp_path / "n", fixed, 1.0, start=start | {"take": "deepen"})
+
+
+def test_a_first_only_member_asks_d1_once_then_follows_the_fixed_rule(
+    gateway, lotus_fakes, d1_server, tmp_path, monkeypatch
+):
+    fixed = {"kind": "fixed", "batches": 3}
+    run_task(gateway, tmp_path / "o", fixed, 1.0)
+    source = tmp_path / "runs" / "src" / "deepscholar" / "ctl" / "tasks" / "f"
+    source.mkdir(parents=True)
+    for name in ("decisions.jsonl", "rows.jsonl", "pages.jsonl"):
+        (source / name).write_text((tmp_path / "o" / name).read_text())
+    monkeypatch.setattr(paths, "RUNS", tmp_path / "runs")
+    d1 = {"kind": "d1", "url": d1_server.url, "sample": True}
+    policy = {"kind": "first", "first": d1, "then": fixed}
+    start = {"run": "src", "system": "ctl", "batches": 1}
+    _, member, _ = run_task(gateway, tmp_path / "f", policy, 1.0, start=start)
+    asked = [s for s in member if not (s["forced"] or s["overridden"] or s["taken"])]
+    assert asked[0]["input"]["requests"] and asked[0]["probs"]  # d1's, at the restored point
+    assert all(s["input"] is None and s["probs"] is None for s in asked[1:])  # the fixed rule's
+    assert member[-1]["state"]["batches"] <= 3
+    system = Controlled({"policy": policy | {"first": d1 | {"url": "http://127.0.0.1:9"}}})
+    assert "url" not in system.identity()["policy"]["first"]  # where d1 listens is not identity
+    with pytest.raises(RuntimeError, match="no d1 server"):
+        system.preflight()  # a FirstThen's d1 is checked before dispatch
 
 
 def test_a_start_without_take_keeps_its_identity():

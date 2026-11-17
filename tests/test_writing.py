@@ -1,5 +1,5 @@
-"""The controlled loop's writing phase (revisions chosen by the fixed rule) and its version guard:
-every cell identity recorded by an earlier run still resolves the same (offline)."""
+"""The controlled loop's writing phase (revisions chosen by a policy) and its version guard: every
+cell identity recorded by an earlier run still resolves the same (offline)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import pytest
 
 from jevscholar import paths
 from jevscholar.controller.policy import Fixed
+from jevscholar.controller.prompt import WRITE_INSTRUCTIONS, Profile
 from jevscholar.controller.state import (
     MAX_REVISIONS,
     Costs,
@@ -23,6 +24,7 @@ from jevscholar.controller.state import (
 from jevscholar.systems.controlled import Controlled
 from test_controlled import (  # noqa: F401 (fixtures)
     TOPIC,
+    d1_server,
     executed,
     gateway,
     lotus_fakes,
@@ -35,8 +37,8 @@ IDENTITIES = Path(__file__).parent / "fixtures" / "controlled_identities.json"
 
 @pytest.mark.parametrize("cell", sorted(json.loads(IDENTITIES.read_text())))
 def test_recorded_cells_keep_their_identity(cell):
-    """The resolved identities of the June dev comparison's systems, the train rollouts and a
-    counterfactual branch, as their runs' manifests recorded them."""
+    """The resolved identities of the June dev comparison's systems, the train rollouts, a
+    counterfactual branch and an RL group member, as their runs' manifests recorded them."""
     recorded = json.loads(IDENTITIES.read_text())[cell]
     params = {k: v for k, v in recorded["params"].items() if k != "use"}
     assert Controlled(params).identity() == recorded["resolved"]
@@ -59,6 +61,7 @@ def drafted(**kw) -> State:
 def test_citations_read_as_numbers_into_the_writers_documents():
     draft = drafted().draft
     assert numbered(draft, DOCS) == "## Related\n\nGraph agents [2][1] and more ."
+    assert numbered(draft, DOCS, "[?]").endswith("more [?].")
 
 
 def test_writing_candidates_follow_the_offer_the_cap_and_the_budget():
@@ -72,6 +75,24 @@ def test_writing_candidates_follow_the_offer_the_cap_and_the_budget():
     assert kinds(("ground", "expand")) == ["submit"]
     s.revisions, s.spent_usd = [], 0.995  # $0.005 left: no revision fits
     assert kinds(("ground", "expand")) == ["submit"]
+
+
+def test_d1_reads_the_draft_and_submit_is_its_stop():
+    s, profile = drafted(revisions=["expand"]), Profile()
+    cands = write_legal(s, ("ground", "expand"), Costs())
+    request = profile.request(s, cands)
+    view, (question,) = request["state"], request["questions"]
+    assert view["documents"] == ["[1] T 1.1", "[2] T 1.2", "[3] T 1.3"]
+    assert "Graph agents [2][1]" in view["draft"] and view["revisions"] == "expand"
+    assert list(question["criteria"]) == ["1. ground", "2. expand", "3. submit"]
+    assert question["instructions"] == WRITE_INSTRUCTIONS
+    assert question["criteria"]["3. submit"] == "submit the draft as the final section"
+    long = drafted()
+    long.draft = "x" * 20000
+    sizes = [len(profile.request(long, cands, lv)["state"]["draft"]) for lv in range(4)]
+    assert sizes == [6004, 3004, 1504, 754]  # cut, halved at each later level
+    assert profile.pick(cands, [0.3, 0.2, 0.5]) == 2  # submit at the threshold
+    assert profile.pick(cands, [0.3, 0.25, 0.45]) == 0
 
 
 def test_the_fixed_rule_revises_in_its_order_then_submits():
@@ -91,9 +112,6 @@ def test_the_fixed_rule_revises_in_its_order_then_submits():
     assert "revise" not in plain
     revised = Controlled({"policy": {"kind": "fixed"}, "revise": ["ground"]}).identity()
     assert revised["params"]["revise"] == ["ground"]
-    for kind in ("d1", "prompted"):  # only the fixed rule makes writing decisions
-        with pytest.raises(ValueError, match="fixed rule only"):
-            Controlled({"policy": {"kind": kind}, "revise": ["ground"]})
 
 
 # --------------------------------------------------------------------------- end to end
@@ -185,6 +203,17 @@ def test_a_branch_continues_from_a_writing_point(gateway, revising, tmp_path, mo
         )
     assert (
         Controlled({"policy": FIXED, "start": old}).identity()["params"]["start"]["revision"] == 0
+    )
+
+
+def test_d1_chooses_a_revision(gateway, revising, d1_server, tmp_path):  # noqa: F811
+    policy = {"kind": "d1", "url": d1_server.url}
+    run_task(gateway, tmp_path / "d", policy, 1.0, max_batches=1, revise=["ground", "expand"])
+    logged = writes(tmp_path / "d")
+    asked = [w for w in logged if not w["forced"]]
+    assert executed(logged) == ["ground", "ground", "submit"]  # the fake's first option wins
+    assert asked and all(
+        w["probs"] and "draft" in w["input"]["requests"][0]["state"] for w in asked
     )
 
 

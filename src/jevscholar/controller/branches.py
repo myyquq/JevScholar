@@ -56,7 +56,7 @@ SYSTEM = "branch"  # the system name of every branch experiment
 CONTINUATION = "ctl_d1"  # the catalog system whose policy continues every branch
 STRATA = ((0, 2), (3, MAX_BATCHES - 1))  # early and late points: batches before, inclusive
 TAU = 0.005  # target smoothing, in return units: about a third of one gold paper of ten
-RESTORED = ("offset_usd", "budget_usd", "max_batches")  # what a branch's own cell sets anew
+RESTORED = ("offset_usd", "budget_usd", "max_batches", "prompts")  # what a branch's cell sets
 
 
 @dataclass(frozen=True)

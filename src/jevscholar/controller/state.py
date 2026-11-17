@@ -45,6 +45,7 @@ FINISH = "finish"
 REVISIONS = ("ground", "expand", "read", "redraft")
 READS = ("read", "redraft")  # the revisions that read the documents' full text
 SUBMIT = "submit"
+STOPS = (FINISH, SUBMIT)  # the candidate that ends a phase, always offered last
 MAX_REVISIONS = 2  # writing decisions that revise, per episode
 CITATION = re.compile(r"\\\[\[[^\]]*\]\((?P<url>[^)\s]+)\)\\\]")  # the writer's \[[label](url)\]
 PAGE = 10  # hits per search page and papers per batch (DS-base's per-query result count)
@@ -89,6 +90,7 @@ class State:
     docs: list[str] = field(default_factory=list)  # the writer's documents (URLs), once ranked
     draft: str | None = None  # the written section (DS-base markdown), once written
     report: bool = False  # a research-report task: `abstract` is its research request
+    prompts: str = "relevance"  # the prompt set d1, the prompted policy and the proposer read
     revisions: list[str] = field(default_factory=list)  # the revisions made, in order
     drafts: list[str] = field(default_factory=list)  # the drafts before each revision
 
@@ -106,7 +108,11 @@ class State:
         return next((q for q in self.queries if q.text == text), None)
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), ensure_ascii=False)
+        """The state as JSON, its prompt set only when not the default (as before it existed)."""
+        d = asdict(self)
+        if d["prompts"] == State.prompts:
+            del d["prompts"]
+        return json.dumps(d, ensure_ascii=False)
 
     @classmethod
     def from_json(cls, text: str) -> State:
@@ -194,11 +200,11 @@ def legal(state: State, candidates: list[Candidate], costs: Costs) -> list[Candi
     return [*searches, *(finish if state.relevant() or not searches else [])]
 
 
-def numbered(draft: str, urls: Sequence[str]) -> str:
+def numbered(draft: str, urls: Sequence[str], unknown: str = "") -> str:
     """The draft with each citation as its number into `urls` ([3]), the writer's own input
-    form; a citation of another URL is dropped."""
+    form; a citation of another URL becomes `unknown`."""
     index = {url: i + 1 for i, url in enumerate(urls)}
-    return CITATION.sub(lambda m: f"[{index[m['url']]}]" if m["url"] in index else "", draft)
+    return CITATION.sub(lambda m: f"[{index[m['url']]}]" if m["url"] in index else unknown, draft)
 
 
 def write_legal(state: State, offered: tuple[str, ...], costs: Costs) -> list[Candidate]:
@@ -230,12 +236,14 @@ class Point:
 def snapshot(state: State, candidates: list[Candidate], fetched: int) -> dict[str, Any]:
     """A decision point by reference: papers and candidate rows as URLs into rows.jsonl, and the
     number of search pages fetched so far (the first `fetched` records of pages.jsonl). `report`,
-    `revisions` and `drafts` are saved only when set, as before they existed."""
+    `revisions`, `drafts` and `prompts` are saved only when set, as before they existed."""
     papers = [[p.url, p.relevant] for p in state.papers]
     saved = asdict(state) | {"papers": papers}
     for key in ("report", "revisions", "drafts"):
         if not saved[key]:
             del saved[key]
+    if saved["prompts"] == State.prompts:
+        del saved["prompts"]
     return {
         "version": SNAPSHOT,
         "state": saved,
